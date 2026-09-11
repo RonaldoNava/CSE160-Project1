@@ -22,6 +22,7 @@ module Node{
    uses interface SimpleSend as Sender;
 
    uses interface CommandHandler;
+   uses interface NDiscovery; //added
 }
 
 implementation{
@@ -32,6 +33,7 @@ implementation{
 
    event void Boot.booted(){
       call AMControl.start();
+      call NDiscovery.start(); //added
 
       dbg(GENERAL_CHANNEL, "Booted\n");
    }
