@@ -1,5 +1,6 @@
 configuration NDiscoveryC {
     provides interface NDiscovery;
+    uses interface SimpleSend as Sender;
 }
 
 implementation {
@@ -8,4 +9,5 @@ implementation {
 
     NDiscovery = NDiscoveryP;
     NDiscoveryP.periodicTimer -> myTimerC;
+    NDiscoveryP.Sender = Sender;
 }

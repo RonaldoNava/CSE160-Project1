@@ -11,26 +11,32 @@
 #include "includes/CommandMsg.h"
 #include "includes/packet.h"
 
-configuration NodeC{
+configuration NodeC
+{
 }
-implementation {
+implementation
+{
     components MainC;
     components Node;
     components new AMReceiverC(AM_PACK) as GeneralReceive;
 
-    Node -> MainC.Boot;
+    Node->MainC.Boot;
 
-    Node.Receive -> GeneralReceive;
+    Node.Receive->GeneralReceive;
 
     components ActiveMessageC;
-    Node.AMControl -> ActiveMessageC;
+    Node.AMControl->ActiveMessageC;
 
-    components new SimpleSendC(AM_PACK);
-    Node.Sender -> SimpleSendC;
+    components new SimpleSendC(AM_PACK) as SenderC;
+    Node.Sender->SenderC;
 
     components CommandHandlerC;
-    Node.CommandHandler -> CommandHandlerC;
+    Node.CommandHandler->CommandHandlerC;
 
     components NDiscoveryC;
-    Node.NDiscovery -> NDiscoveryC; //added
+    Node.NDiscovery->NDiscoveryC;
+    NDiscoveryC.Sender->SenderC;
+
+    components FloodingC;
+    Node.Flooding->FloodingC;
 }

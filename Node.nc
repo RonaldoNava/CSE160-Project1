@@ -22,7 +22,8 @@ module Node{
    uses interface SimpleSend as Sender;
 
    uses interface CommandHandler;
-   uses interface NDiscovery; //added
+   uses interface NDiscovery; //added for Neighbor Discovery
+   uses interface Flooding; //added for Flooding
 }
 
 implementation{
@@ -33,7 +34,7 @@ implementation{
 
    event void Boot.booted(){
       call AMControl.start();
-      call NDiscovery.start(); //added
+      call NDiscovery.start(); //start discovery/timing after boot
 
       dbg(GENERAL_CHANNEL, "Booted\n");
    }
@@ -49,16 +50,28 @@ implementation{
 
    event void AMControl.stopDone(error_t err){}
 
-   event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len){
-      dbg(GENERAL_CHANNEL, "Packet Received\n");
-      if(len==sizeof(pack)){
-         pack* myMsg=(pack*) payload;
-         dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
-         return msg;
-      }
-      dbg(GENERAL_CHANNEL, "Unknown Packet Type %d\n", len);
-      return msg;
-   }
+  event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len) {
+    dbg(GENERAL_CHANNEL, "Packet Received\n");
+    if (len == sizeof(pack)) {
+        pack* myMsg = (pack*) payload;
+      //check whether this is a neighbor-discovery packet.
+        if (myMsg->protocol == PROTOCOL_NEIGHBOR) {
+            dbg(NEIGHBOR_CHANNEL,
+                "Node %d received discovery from node %d\n",
+                TOS_NODE_ID,
+                myMsg->src);
+            call NDiscovery.recordNeighbor(myMsg->src);
+            return msg;
+        }
+
+        dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
+        return msg;
+    }
+
+    dbg(GENERAL_CHANNEL, "Unknown Packet Type %d\n",len);
+
+    return msg;
+}
 
 
    event void CommandHandler.ping(uint16_t destination, uint8_t *payload){
@@ -67,7 +80,9 @@ implementation{
       call Sender.send(sendPackage, destination);
    }
 
-   event void CommandHandler.printNeighbors(){}
+   event void CommandHandler.printNeighbors(){
+      call NDiscovery.printNeighbors();
+   }
 
    event void CommandHandler.printRouteTable(){}
 
