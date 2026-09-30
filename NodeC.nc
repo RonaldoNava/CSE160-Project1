@@ -26,6 +26,7 @@ implementation
 
     components ActiveMessageC;
     Node.AMControl->ActiveMessageC;
+    Node.AMPacket -> ActiveMessageC;
 
     components new SimpleSendC(AM_PACK) as SenderC;
     Node.Sender->SenderC;

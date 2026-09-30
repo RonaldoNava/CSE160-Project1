@@ -14,7 +14,16 @@ enum{
 	PACKET_MAX_PAYLOAD_SIZE = 28 - PACKET_HEADER_LENGTH,
 	MAX_TTL = 15
 };
+//add neighbor discovery header
+typedef nx_struct NeighborDiscoveryHeader{ 
+    nx_uint8_t type;
+    nx_uint16_t seq;
+} NeighborDiscoveryHeader;
 
+enum{
+    ND_REQUEST = 0,
+    ND_REPLY = 1
+};
 
 typedef nx_struct pack{
 	nx_uint16_t dest;

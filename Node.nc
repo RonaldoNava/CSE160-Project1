@@ -18,6 +18,7 @@ module Node{
 
    uses interface SplitControl as AMControl;
    uses interface Receive;
+   uses interface AMPacket;
 
    uses interface SimpleSend as Sender;
 
@@ -51,16 +52,16 @@ implementation{
    event void AMControl.stopDone(error_t err){}
 
   event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len) {
+   
     dbg(GENERAL_CHANNEL, "Packet Received\n");
+
     if (len == sizeof(pack)) {
         pack* myMsg = (pack*) payload;
       //check whether this is a neighbor-discovery packet.
-        if (myMsg->protocol == PROTOCOL_NEIGHBOR) {
-            dbg(NEIGHBOR_CHANNEL,
-                "Node %d received discovery from node %d\n",
-                TOS_NODE_ID,
-                myMsg->src);
-            call NDiscovery.recordNeighbor(myMsg->src);
+         if(myMsg->protocol == PROTOCOL_NEIGHBOR){
+            dbg(NEIGHBOR_CHANNEL, "Node %d received discovery from node %d\n", TOS_NODE_ID, myMsg->src);
+            call NDiscovery.receive(*myMsg, myMsg->src);
+
             return msg;
         }
 
