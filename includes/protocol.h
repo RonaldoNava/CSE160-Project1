@@ -14,6 +14,7 @@ enum{
 	PROTOCOL_TCP= 4,
 	PROTOCOL_DV = 5,
 	PROTOCOL_NEIGHBOR = 6, //add enum for neighbor protocol
+	PROTOCOL_FLOODING = 7, //add enum for flooding protocol
    PROTOCOL_CMD = 99
 };
 

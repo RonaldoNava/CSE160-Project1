@@ -40,4 +40,6 @@ implementation
 
     components FloodingC;
     Node.Flooding->FloodingC;
+    FloodingC.Sender->SenderC;
+    FloodingC.NDiscovery->NDiscoveryC;
 }

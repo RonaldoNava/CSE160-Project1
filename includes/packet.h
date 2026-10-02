@@ -20,6 +20,23 @@ typedef nx_struct NeighborDiscoveryHeader{
     nx_uint16_t seq;
 } NeighborDiscoveryHeader;
 
+//add flooding header
+typedef nx_struct FloodingHeader{
+    nx_uint16_t src;        // original node that started this flood
+    nx_uint16_t seq;        // flood-level sequence number (unique per src)
+    nx_uint8_t TTL;         // hops remaining; decremented once per hop
+    nx_uint8_t payload[0];  // zero-length array trick -- C-Tutorial slide 27
+} FloodingHeader;
+
+enum{
+    FLOODING_MAX_PAYLOAD_SIZE = PACKET_MAX_PAYLOAD_SIZE - sizeof(FloodingHeader)
+};
+
+enum{
+    FLOOD_PING = 0,
+    FLOOD_PING_REPLY = 1
+};
+
 enum{
     ND_REQUEST = 0,
     ND_REPLY = 1
