@@ -45,7 +45,7 @@ implementation {
     task void sendDiscoveryTask();
 
 
-    //Find a neighbor in the table
+    //finds a neighbor in the table
     int8_t findNeighbor(uint16_t nodeID){
         uint8_t i;
 
@@ -61,7 +61,7 @@ implementation {
     }
 
 
-    //Find an empty spot in the table
+    //finds an empty spot in the table
     int8_t findFreeSlot(){
         uint8_t i;
 
@@ -76,7 +76,7 @@ implementation {
     }
 
 
-    //Calculate the percentage of discovery packets that we received from this neighbor
+    //calculate connection quality
     void updateQuality(uint8_t index){
         if (neighborStats[index].sent == 0) {
 
@@ -90,7 +90,7 @@ implementation {
     }
 
 
-    //Start neighbor discovery
+    //start neighbor discovery
     command void NDiscovery.start(){
         uint8_t i;
 
@@ -115,13 +115,13 @@ implementation {
     }
 
 
-    //Every 5 seconds, send a discovery packet
+    //every 5 seconds send a discovery packet
     event void periodicTimer.fired(){
         post sendDiscoveryTask();
     }
 
 
-    //Send a neighbor discovery request
+    //send a neighbor discovery request
     task void sendDiscoveryTask(){
         pack discoveryPacket;
         NeighborDiscoveryHeader *header;
@@ -131,7 +131,7 @@ implementation {
         discoverySeq++;
 
 
-        //Set up the packet
+        //set up the packet
         discoveryPacket.src = TOS_NODE_ID;
         discoveryPacket.dest = AM_BROADCAST_ADDR;
         discoveryPacket.seq = discoverySeq;
@@ -139,7 +139,7 @@ implementation {
         discoveryPacket.protocol = PROTOCOL_NEIGHBOR;
 
 
-        //Put the discovery header inside the packet
+        //put the discovery header inside the packet
         header = (NeighborDiscoveryHeader *)discoveryPacket.payload;
 
         header->type = ND_REQUEST;
@@ -153,7 +153,7 @@ implementation {
 
                 neighborStats[i].sent++;
 
-                //Check if this neighbor has missed too many discovery replies
+                //check if this neighbor has missed too many discovery replies
                 if (discoverySeq > neighborStats[i].lastSeq) {
 
                     uint16_t missed;
