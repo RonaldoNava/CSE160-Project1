@@ -42,4 +42,11 @@ implementation
     Node.Flooding->FloodingC;
     FloodingC.Sender->SenderC;
     FloodingC.NDiscovery->NDiscoveryC;
+
+    //project 2 link state routing
+    components LSC;
+    Node.LinkState->LSC.LinkState;
+    LSC.NDiscovery->NDiscoveryC;
+    LSC.Flooding->FloodingC;
+
 }

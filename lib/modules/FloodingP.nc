@@ -13,7 +13,7 @@ implementation
 
     enum
     {
-        MAX_CACHE_SIZE = 32
+        MAX_CACHE_SIZE = 128
     };
     // flooding cache entry
     typedef struct
@@ -26,18 +26,33 @@ implementation
     FloodCacheEntry floodCache[MAX_CACHE_SIZE];
 
     uint16_t floodSeq = 0;
+    uint8_t nextCacheSlot = 0;
+
+    void rememberFlood(uint16_t nodeID, uint16_t seq){
+
+        dbg(FLOODING_CHANNEL,
+        "Node %d: CACHE INSERT origin %d seq %d slot %d\n",
+        TOS_NODE_ID,
+        nodeID,
+        seq,
+        nextCacheSlot);
+        floodCache[nextCacheSlot].used = TRUE;
+        floodCache[nextCacheSlot].nodeID = nodeID;
+        floodCache[nextCacheSlot].seq = seq;
+
+        nextCacheSlot = (nextCacheSlot + 1) % MAX_CACHE_SIZE;
+    }
 
     // find the cache entry for a node.
-    int8_t findCacheEntry(uint16_t nodeID)
+    int8_t findCacheEntry(uint16_t nodeID, uint16_t seq)
     {
         uint8_t i;
 
         for (i = 0; i < MAX_CACHE_SIZE; i++)
         {
             if (floodCache[i].used &&
-                floodCache[i].nodeID == nodeID)
-            {
-
+                floodCache[i].nodeID == nodeID &&
+                floodCache[i].seq == seq){
                 return i;
             }
         }
@@ -61,12 +76,17 @@ implementation
         return -1;
     }
 
+    event void NDiscovery.neighborChanged(){
+        
+    }
+
     // begin flooding
     command void Flooding.start()
     {
         uint8_t i;
 
         floodSeq = 0;
+        nextCacheSlot = 0;
 
         for (i = 0; i < MAX_CACHE_SIZE; i++)
         {
@@ -112,7 +132,7 @@ implementation
         memcpy(header->payload, msg.payload, FLOODING_MAX_PAYLOAD_SIZE);
 
         // save our own flood in the cache.
-        index = findCacheEntry(TOS_NODE_ID);
+        index = findCacheEntry(TOS_NODE_ID, floodSeq);
         // find an empty slot
         if (index < 0)
         {
@@ -142,9 +162,16 @@ implementation
                 if (active)
                 {
 
-                    call Sender.send(
+                    /*call Sender.send(
                         floodPacket,
-                        neighborID);
+                        neighborID);*/
+
+                    if (call Sender.send(floodPacket, neighborID) != SUCCESS){
+                        dbg(FLOODING_CHANNEL,
+                            "Node %d: FAILED to queue flood seq %d to neighbor %d\n",
+                            TOS_NODE_ID, floodSeq, neighborID);
+                    }
+                    
 
                     dbg(FLOODING_CHANNEL,
                         "Node %d: sent flood to neighbor %d, seq %d, TTL %d\n",
@@ -175,44 +202,31 @@ implementation
         header = (FloodingHeader *)msg.payload;
 
         // check the cache using the original flood src
-        index = findCacheEntry(header->src);
+        index = findCacheEntry(header->src, header->seq);
 
-        // new flood from src
-        if (index < 0)
-        {
+        if (index >= 0){
+            dbg(FLOODING_CHANNEL, "Node %d: duplicate flood from %d seq %d\n",
+                TOS_NODE_ID, header->src, header->seq);
 
-            index = findFreeCacheSlot();
+            dbg(FLOODING_CHANNEL,
+                "Node %d: Duplicate details: origin %d seq %d, received from neighbor %d\n",
+                TOS_NODE_ID,
+                header->src,
+                header->seq,
+                source);
 
-            if (index < 0)
-            {
-                dbg(FLOODING_CHANNEL, "Node %d: flood cache full\n", TOS_NODE_ID);
-
-                return;
-            }
-
-            floodCache[index].used = TRUE;
-            floodCache[index].nodeID = header->src;
-            floodCache[index].seq = header->seq;
+            dbg(FLOODING_CHANNEL,
+                "Node %d: CACHE MATCH incoming (%d, %d), stored (%d, %d), slot %d\n",
+                TOS_NODE_ID,
+                header->src,
+                header->seq,
+                floodCache[index].nodeID,
+                floodCache[index].seq,
+                index);
+            return;
         }
 
-        // ingore duplicate or old floods
-        else
-        {
-            // way to prevent loops
-            if (header->seq <= floodCache[index].seq)
-            {
-
-                dbg(FLOODING_CHANNEL,
-                    "Node %d: duplicate flood from %d seq %d\n",
-                    TOS_NODE_ID,
-                    header->src,
-                    header->seq);
-
-                return; // dont forward it
-            }
-
-            floodCache[index].seq = header->seq;
-        }
+        rememberFlood(header->src, header->seq);
 
         dbg(FLOODING_CHANNEL,
             "Node %d: received flood from %d to %d, seq %d TTL %d\n",

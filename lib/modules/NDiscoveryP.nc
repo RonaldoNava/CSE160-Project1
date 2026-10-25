@@ -132,7 +132,7 @@ implementation
         NeighborDiscoveryHeader *header;
 
         uint8_t i;
-        bool changed = false;
+        bool changed = FALSE;
 
         discoverySeq++;
 
@@ -174,7 +174,7 @@ implementation
 
                         if (neighborTable[i].active)
                         {
-                            changed = true;
+                            changed = TRUE;
                         }
                         neighborTable[i].active = FALSE;
                     }
@@ -187,6 +187,9 @@ implementation
         // send the discovery request
         call Sender.send(discoveryPacket, AM_BROADCAST_ADDR);
 
+        if (changed){
+            signal NDiscovery.neighborChanged();
+        }
         // dbg(NEIGHBOR_CHANNEL, "Node %d sent neighbor discovery seq %d\n", TOS_NODE_ID, discoverySeq);
     }
 
@@ -277,11 +280,16 @@ implementation
                 neighborTable[index].active = neighborStats[index].consecutiveMisses < MAX_MISSED;
 
                 updateQuality(index);
+
+                if (neighborTable[index].active){
+                    signal NDiscovery.neighborChanged();
+                }
             }
 
             // this is an existing neighbor
             else
             {
+                bool wasActive = neighborTable[index].active;
                 // ignore an old or duplicate reply
                 if (header->seq <= neighborStats[index].lastSeq)
                 {
@@ -323,6 +331,10 @@ implementation
                 neighborTable[index].active = TRUE;
 
                 updateQuality(index);
+
+                if (!wasActive){
+                    signal NDiscovery.neighborChanged();
+                }
             }
 
             /*

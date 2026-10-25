@@ -68,6 +68,10 @@ implementation{
 
          return SUCCESS;
       }
+      dbg(GENERAL_CHANNEL,
+         "Node %d: SimpleSend queue full, dropping packet to %d\n",
+         TOS_NODE_ID, dest);
+
       return FAIL;
    }
 

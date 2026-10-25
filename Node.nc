@@ -24,6 +24,7 @@ uses interface SimpleSend as Sender;
 uses interface CommandHandler;
 uses interface NDiscovery; // added for Neighbor Discovery
 uses interface Flooding;   // added for Flooding
+uses interface LinkState;
 }
 
 implementation
@@ -38,6 +39,7 @@ implementation
       call AMControl.start();
       call NDiscovery.start(); // start discovery/timing after boot
       call Flooding.start();   // start Flooding
+      call LinkState.start(); //start link state routing
 
       dbg(GENERAL_CHANNEL, "Booted\n");
    }
@@ -57,6 +59,10 @@ implementation
 
    event void Flooding.received(pack msg, uint16_t source)
    {
+      // Link-State handles LSA packets, not Node
+      if (msg.payload[0] == FLOOD_LSA){
+         return;
+      }
 
       // Not addressed to us -- FloodingP has already forwarded it on.
       if (msg.dest != TOS_NODE_ID)
@@ -128,6 +134,8 @@ implementation
       call Flooding.flood(sendPackage);
    }
 
+   event void NDiscovery.neighborChanged(){}
+   
    event void CommandHandler.printNeighbors()
    {
       call NDiscovery.printNeighbors();

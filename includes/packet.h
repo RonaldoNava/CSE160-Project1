@@ -60,7 +60,7 @@ LSATuple;
 enum
 {
 	LSA_MAX_TUPLES =
-			(PACKET_MAX_PAYLOAD_SIZE - sizeof(LSAHeader)) /
+		(FLOODING_MAX_PAYLOAD_SIZE - 1 - sizeof(LSAHeader)) /
 		sizeof(LSATuple)
 };
 
@@ -95,7 +95,8 @@ enum
 enum
 {
 	FLOOD_PING = 0,
-	FLOOD_PING_REPLY = 1
+	FLOOD_PING_REPLY = 1,
+	FLOOD_LSA = 2
 };
 
 enum

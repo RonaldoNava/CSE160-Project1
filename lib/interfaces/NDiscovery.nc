@@ -5,4 +5,5 @@ interface NDiscovery {
     command bool isCurrentNeighbor(uint16_t nodeID);
     command uint8_t getNeighborCount();
     command bool getNeighbor(uint8_t index, uint16_t* nodeID, uint8_t* quality, bool* active);
+    event void neighborChanged();
 }
