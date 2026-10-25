@@ -25,6 +25,7 @@ uses interface CommandHandler;
 uses interface NDiscovery; // added for Neighbor Discovery
 uses interface Flooding;   // added for Flooding
 uses interface LinkState;
+uses interface IP;
 }
 
 implementation
@@ -90,6 +91,19 @@ implementation
 
    event void AMControl.stopDone(error_t err) {}
 
+   event void IP.received(pack msg){
+      if (msg.protocol == PROTOCOL_PING){
+         dbg(ROUTING_CHANNEL, "Node %d: Received IP ping from %d\n",
+            TOS_NODE_ID, msg.src);
+         call IP.send(msg.src, PROTOCOL_PINGREPLY, msg.payload, PACKET_MAX_PAYLOAD_SIZE);
+
+      }
+      else if (msg.protocol == PROTOCOL_PINGREPLY){
+         dbg(ROUTING_CHANNEL, "Node %d: Received IP PingReply from %d, payload %s\n",
+            TOS_NODE_ID, msg.src, msg.payload);
+      }
+   }
+
    event message_t *Receive.receive(message_t * msg, void *payload, uint8_t len)
    {
 
@@ -111,6 +125,13 @@ implementation
             call Flooding.receive(*myMsg, call AMPacket.source(msg));
             return msg;
          }
+         if (myMsg->protocol == PROTOCOL_IP || 
+            myMsg->protocol == PROTOCOL_PING ||
+            myMsg->protocol == PROTOCOL_PINGREPLY){
+
+            call IP.receive(*myMsg);
+            return msg;
+         }
 
          dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
          return msg;
@@ -123,7 +144,12 @@ implementation
 
    event void CommandHandler.ping(uint16_t destination, uint8_t *payload)
    {
-      uint8_t pingPayload[FLOODING_MAX_PAYLOAD_SIZE];
+      dbg(GENERAL_CHANNEL, "Node %d: Sending IP ping to %d\n",
+         TOS_NODE_ID, destination);
+
+      call IP.send(destination, PROTOCOL_PING, payload, PACKET_MAX_PAYLOAD_SIZE);         
+
+      /*uint8_t pingPayload[FLOODING_MAX_PAYLOAD_SIZE];
 
       dbg(GENERAL_CHANNEL, "PING EVENT \n");
 
@@ -131,7 +157,7 @@ implementation
       memcpy(&pingPayload[1], payload, FLOODING_MAX_PAYLOAD_SIZE - 1);
 
       makePack(&sendPackage, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_FLOODING, 0, pingPayload, FLOODING_MAX_PAYLOAD_SIZE);
-      call Flooding.flood(sendPackage);
+      call Flooding.flood(sendPackage);*/
    }
 
    event void NDiscovery.neighborChanged(){}

@@ -26,10 +26,7 @@ def main():
     # Give Neigbor Discover and Link-STate time to initialize
     s.runTime(30)
 
-    s.ping(2, 3, "Hello World")
-    s.runTime(3)
-
-    s.ping(1, 10, "Hi!")
+    s.ping(2, 19, "Hi")
     s.runTime(10)
 
 if __name__ == '__main__':

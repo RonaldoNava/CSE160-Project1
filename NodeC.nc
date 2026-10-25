@@ -49,4 +49,8 @@ implementation
     LSC.NDiscovery->NDiscoveryC;
     LSC.Flooding->FloodingC;
 
+    components IPC;
+    Node.IP->IPC.IP;
+    IPC.LinkState->LSC.LinkState;
+    IPC.Sender->SenderC;
 }

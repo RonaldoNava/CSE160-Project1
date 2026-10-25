@@ -275,7 +275,7 @@ implementation {
 
     int8_t findClosestNode() {
         uint8_t i;
-        uint8_t closest = -1;
+        int8_t closest = -1;
         uint16_t smallest = INFINITY_COST;
 
         for (i = 0; i < MAX_NODES; i++){
@@ -294,7 +294,7 @@ implementation {
         uint8_t current;
         uint8_t neighborIndex;
 
-        uint8_t closest;
+        int8_t closest;
         uint16_t newDistance;
 
         for (i = 0; i < MAX_NODES; i++){
@@ -410,9 +410,17 @@ implementation {
         if (dest == 0 || dest > MAX_NODES){
             return 0;
         }
-         if (dest == TOS_NODE_ID){
+
+        if (dest == TOS_NODE_ID){
             return 0;
         }
+
+        dbg(ROUTING_CHANNEL,
+            "Node %d: LOOKUP destination %d, nextHop %d, distance %d\n",
+            TOS_NODE_ID,
+            dest,
+            nextHop[dest - 1],
+            distance[dest - 1]);
 
         return nextHop[dest - 1];
     }

@@ -3,7 +3,7 @@
 #include "../../includes/channels.h"
 
 module IPP {
-    provides interface UP;
+    provides interface IP;
 
     uses interface LinkState;
     uses interface SimpleSend as Sender;
@@ -35,7 +35,7 @@ implementation {
         msg.src = TOS_NODE_ID;
         msg.dest = dest;
         msg.seq = 0;
-        msg TTL = MAX_TTL;
+        msg.TTL = MAX_TTL;
         msg.protocol = protocol;
 
         memcpy(msg.payload, payload, len);
@@ -57,5 +57,23 @@ implementation {
             signal IP.received(msg);
             return;
         }
+
+        if (msg.TTL <= 1){
+            dbg(ROUTING_CHANNEL, "Node  %d: IP packet TTL expired\n",
+                TOS_NODE_ID);
+            return;
+        }
+        next = call LinkState.getNextHop(msg.dest);
+        
+        if (next == 0) {
+            dbg(ROUTING_CHANNEL, "Node %d: No route to destination %d\n",
+                TOS_NODE_ID, msg.dest);
+            return;
+        }
+        msg.TTL--;
+        dbg(ROUTING_CHANNEL, "Node %d: IP forwarding from %d to %d through %d, TTL %d\n",
+            TOS_NODE_ID, msg.src, msg.dest, next, msg.TTL);
+
+        call Sender.send(msg, next);
     }
 }
