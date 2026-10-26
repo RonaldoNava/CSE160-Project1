@@ -149,15 +149,6 @@ implementation
 
       call IP.send(destination, PROTOCOL_PING, payload, PACKET_MAX_PAYLOAD_SIZE);         
 
-      /*uint8_t pingPayload[FLOODING_MAX_PAYLOAD_SIZE];
-
-      dbg(GENERAL_CHANNEL, "PING EVENT \n");
-
-      pingPayload[0] = FLOOD_PING;
-      memcpy(&pingPayload[1], payload, FLOODING_MAX_PAYLOAD_SIZE - 1);
-
-      makePack(&sendPackage, TOS_NODE_ID, destination, MAX_TTL, PROTOCOL_FLOODING, 0, pingPayload, FLOODING_MAX_PAYLOAD_SIZE);
-      call Flooding.flood(sendPackage);*/
    }
 
    event void NDiscovery.neighborChanged(){}
@@ -167,7 +158,9 @@ implementation
       call NDiscovery.printNeighbors();
    }
 
-   event void CommandHandler.printRouteTable() {}
+   event void CommandHandler.printRouteTable() {
+      call LinkState.printRoutingTable();
+   }
 
    event void CommandHandler.printLinkState() {}
 

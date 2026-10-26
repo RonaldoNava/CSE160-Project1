@@ -18,16 +18,23 @@ def main():
 
     # Add the main channels. These channels are declared in includes/channels.h
     s.addChannel(s.COMMAND_CHANNEL);
-    s.addChannel(s.GENERAL_CHANNEL);
-    s.addChannel(s.FLOODING_CHANNEL);
-    s.addChannel(s.NEIGHBOR_CHANNEL);
+    # s.addChannel(s.GENERAL_CHANNEL);
+    # s.addChannel(s.FLOODING_CHANNEL);
+    # s.addChannel(s.NEIGHBOR_CHANNEL);
     s.addChannel(s.ROUTING_CHANNEL)
 
-    # Give Neigbor Discover and Link-STate time to initialize
+# Allow routing to converge
     s.runTime(30)
 
+    print("Starting ping test")
+
     s.ping(2, 19, "Hi")
-    s.runTime(10)
+
+    print("Ping command submitted")
+
+    s.runTime(25)
+
+    print("Simulation finished")
 
 if __name__ == '__main__':
     main()

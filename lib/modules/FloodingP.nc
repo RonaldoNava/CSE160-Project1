@@ -30,12 +30,6 @@ implementation
 
     void rememberFlood(uint16_t nodeID, uint16_t seq){
 
-        dbg(FLOODING_CHANNEL,
-        "Node %d: CACHE INSERT origin %d seq %d slot %d\n",
-        TOS_NODE_ID,
-        nodeID,
-        seq,
-        nextCacheSlot);
         floodCache[nextCacheSlot].used = TRUE;
         floodCache[nextCacheSlot].nodeID = nodeID;
         floodCache[nextCacheSlot].seq = seq;
@@ -207,22 +201,6 @@ implementation
         if (index >= 0){
             dbg(FLOODING_CHANNEL, "Node %d: duplicate flood from %d seq %d\n",
                 TOS_NODE_ID, header->src, header->seq);
-
-            dbg(FLOODING_CHANNEL,
-                "Node %d: Duplicate details: origin %d seq %d, received from neighbor %d\n",
-                TOS_NODE_ID,
-                header->src,
-                header->seq,
-                source);
-
-            dbg(FLOODING_CHANNEL,
-                "Node %d: CACHE MATCH incoming (%d, %d), stored (%d, %d), slot %d\n",
-                TOS_NODE_ID,
-                header->src,
-                header->seq,
-                floodCache[index].nodeID,
-                floodCache[index].seq,
-                index);
             return;
         }
 

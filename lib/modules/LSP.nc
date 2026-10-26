@@ -240,13 +240,6 @@ implementation {
                 break;
             }
         }
-
-        dbg(ROUTING_CHANNEL,
-            "Node %d: COUNT DEBUG origin %d, numParts %d, partCounts[0] %d\n",
-            TOS_NODE_ID,
-            origin,
-            database[slot].numParts,
-            database[slot].partCounts[0]);
         // if complete, count the neighbors
         if (allReceived){
             for (i = 0; i < database[slot].numParts; i++){
@@ -353,7 +346,6 @@ implementation {
                 break;
             }
         }
-        dbg(ROUTING_CHANNEL, "Node %d: Dijkstra calculation complete\n", TOS_NODE_ID);
     }
 
     command void LinkState.start(){ 
@@ -384,26 +376,31 @@ implementation {
     }
 
     command void LinkState.printRoutingTable(){
-        uint8_t i;
+        uint16_t routeIndex;
 
-        dbg(ROUTING_CHANNEL, "\nNode %d: Routing Table\n", TOS_NODE_ID);
+        dbg(ROUTING_CHANNEL,
+            "\nNode %d: Routing Table\n",
+            TOS_NODE_ID);
 
-        dbg(ROUTING_CHANNEL, "Destination | Next Hop | Cost\n");
+        dbg(ROUTING_CHANNEL,
+            "Destination | Next Hop | Cost\n");
 
-        for (i = 0; i < MAX_NODES; i){
-            if (distance[i] == INFINITY_COST){
-                continue;
+        for (routeIndex = 0; routeIndex < MAX_NODES; routeIndex++){
+
+            if (distance[routeIndex] != INFINITY_COST &&
+                routeIndex + 1 != TOS_NODE_ID){
+
+                dbg(ROUTING_CHANNEL,
+                    "     %d      |    %d     |  %d\n",
+                    routeIndex + 1,
+                    nextHop[routeIndex],
+                    distance[routeIndex]);
             }
-
-            if (i + 1 == TOS_NODE_ID){
-                continue;
-            }
-
-            dbg(ROUTING_CHANNEL,
-                "     %d      |    %d     |  %d\n",
-            i + 1, nextHop[i], distance[i]);
-            
         }
+
+        dbg(ROUTING_CHANNEL,
+            "Node %d: Routing table dump finished\n",
+            TOS_NODE_ID);
     }
 
     command uint16_t LinkState.getNextHop(uint16_t dest){

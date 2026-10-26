@@ -113,8 +113,7 @@ typedef nx_struct pack
 	nx_uint8_t TTL;	 // Time to Live
 	nx_uint8_t protocol;
 	nx_uint8_t payload[PACKET_MAX_PAYLOAD_SIZE];
-}
-pack;
+}pack;
 
 /*
  * logPack
