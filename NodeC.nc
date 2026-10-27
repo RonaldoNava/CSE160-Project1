@@ -26,7 +26,7 @@ implementation
 
     components ActiveMessageC;
     Node.AMControl->ActiveMessageC;
-    Node.AMPacket -> ActiveMessageC;
+    Node.AMPacket->ActiveMessageC;
 
     components new SimpleSendC(AM_PACK) as SenderC;
     Node.Sender->SenderC;
@@ -43,14 +43,21 @@ implementation
     FloodingC.Sender->SenderC;
     FloodingC.NDiscovery->NDiscoveryC;
 
-    //project 2 link state routing
-    components LSC;
-    Node.LinkState->LSC.LinkState;
-    LSC.NDiscovery->NDiscoveryC;
-    LSC.Flooding->FloodingC;
+    // project 2 link state routing
+    // components LSC;
+    // Node.LinkState->LSC.LinkState;
+    // LSC.NDiscovery->NDiscoveryC;
+    // LSC.Flooding->FloodingC;
+
+    // new project 2 distance vector routing
+    components DVC;
+    Node.DistanceVector->DVC.DistanceVector;
+    DVC.NDiscovery->NDiscoveryC;
+    DVC.Sender->SenderC;
 
     components IPC;
     Node.IP->IPC.IP;
-    IPC.LinkState->LSC.LinkState;
+    // IPC.LinkState->LSC.LinkState;
+    IPC.DistanceVector->DVC.DistanceVector;
     IPC.Sender->SenderC;
 }

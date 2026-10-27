@@ -2,29 +2,34 @@
 #include "../../includes/protocol.h"
 #include "../../includes/channels.h"
 
-module IPP {
-    provides interface IP;
+module IPP{provides interface IP;
 
-    uses interface LinkState;
-    uses interface SimpleSend as Sender;
+// uses interface LinkState;
+uses interface DistanceVector;
+uses interface SimpleSend as Sender;
 }
 
-implementation {
+implementation
+{
 
-    command error_t IP.send(uint16_t dest, uint8_t protocol, uint8_t *payload, uint8_t len){
+    command error_t IP.send(uint16_t dest, uint8_t protocol, uint8_t *payload, uint8_t len)
+    {
         pack msg;
         uint16_t next;
 
-        if (len > PACKET_MAX_PAYLOAD_SIZE){
+        if (len > PACKET_MAX_PAYLOAD_SIZE)
+        {
             return FAIL;
         }
-        if (dest == TOS_NODE_ID){
+        if (dest == TOS_NODE_ID)
+        {
             return FAIL;
         }
 
-        next = call LinkState.getNextHop(dest);
+        next = call DistanceVector.getNextHop(dest);
 
-        if (next == 0){
+        if (next == 0)
+        {
             dbg(ROUTING_CHANNEL, "Node %d: No route to destination %d\n",
                 TOS_NODE_ID, dest);
 
@@ -46,10 +51,20 @@ implementation {
         return call Sender.send(msg, next);
     }
 
-    command void IP.receive(pack msg){
+    command void IP.receive(pack msg)
+    {
         uint16_t next;
 
-        if (msg.dest == TOS_NODE_ID){
+        if (msg.TTL == 0)
+        {
+            dbg(ROUTING_CHANNEL,
+                "Node %d: IP packet TTL expired\n",
+                TOS_NODE_ID);
+            return;
+        }
+
+        if (msg.dest == TOS_NODE_ID)
+        {
 
             dbg(ROUTING_CHANNEL, "Node %d: IP packet received from %d\n",
                 TOS_NODE_ID, msg.src);
@@ -58,14 +73,16 @@ implementation {
             return;
         }
 
-        if (msg.TTL <= 1){
+        if (msg.TTL <= 1)
+        {
             dbg(ROUTING_CHANNEL, "Node  %d: IP packet TTL expired\n",
                 TOS_NODE_ID);
             return;
         }
-        next = call LinkState.getNextHop(msg.dest);
-        
-        if (next == 0) {
+        next = call DistanceVector.getNextHop(msg.dest);
+
+        if (next == 0)
+        {
             dbg(ROUTING_CHANNEL, "Node %d: No route to destination %d\n",
                 TOS_NODE_ID, msg.dest);
             return;
@@ -75,5 +92,9 @@ implementation {
             TOS_NODE_ID, msg.src, msg.dest, next, msg.TTL);
 
         call Sender.send(msg, next);
+    }
+    event void DistanceVector.routeChanged()
+    {
+        // IP looks up routes whenever it sends or forwards a packet
     }
 }

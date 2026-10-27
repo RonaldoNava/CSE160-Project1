@@ -24,7 +24,8 @@ uses interface SimpleSend as Sender;
 uses interface CommandHandler;
 uses interface NDiscovery; // added for Neighbor Discovery
 uses interface Flooding;   // added for Flooding
-uses interface LinkState;
+// uses interface LinkState;
+uses interface DistanceVector;
 uses interface IP;
 }
 
@@ -40,7 +41,8 @@ implementation
       call AMControl.start();
       call NDiscovery.start(); // start discovery/timing after boot
       call Flooding.start();   // start Flooding
-      call LinkState.start(); //start link state routing
+      // call LinkState.start(); start link state routing
+      call DistanceVector.start(); // start distance vector routing
 
       dbg(GENERAL_CHANNEL, "Booted\n");
    }
@@ -61,7 +63,8 @@ implementation
    event void Flooding.received(pack msg, uint16_t source)
    {
       // Link-State handles LSA packets, not Node
-      if (msg.payload[0] == FLOOD_LSA){
+      if (msg.payload[0] == FLOOD_LSA)
+      {
          return;
       }
 
@@ -91,16 +94,18 @@ implementation
 
    event void AMControl.stopDone(error_t err) {}
 
-   event void IP.received(pack msg){
-      if (msg.protocol == PROTOCOL_PING){
+   event void IP.received(pack msg)
+   {
+      if (msg.protocol == PROTOCOL_PING)
+      {
          dbg(ROUTING_CHANNEL, "Node %d: Received IP ping from %d\n",
-            TOS_NODE_ID, msg.src);
+             TOS_NODE_ID, msg.src);
          call IP.send(msg.src, PROTOCOL_PINGREPLY, msg.payload, PACKET_MAX_PAYLOAD_SIZE);
-
       }
-      else if (msg.protocol == PROTOCOL_PINGREPLY){
+      else if (msg.protocol == PROTOCOL_PINGREPLY)
+      {
          dbg(ROUTING_CHANNEL, "Node %d: Received IP PingReply from %d, payload %s\n",
-            TOS_NODE_ID, msg.src, msg.payload);
+             TOS_NODE_ID, msg.src, msg.payload);
       }
    }
 
@@ -120,14 +125,20 @@ implementation
 
             return msg;
          }
+         if (myMsg->protocol == PROTOCOL_DV)
+         {
+            call DistanceVector.receive(*myMsg, call AMPacket.source(msg));
+            return msg;
+         }
          if (myMsg->protocol == PROTOCOL_FLOODING)
          {
             call Flooding.receive(*myMsg, call AMPacket.source(msg));
             return msg;
          }
-         if (myMsg->protocol == PROTOCOL_IP || 
-            myMsg->protocol == PROTOCOL_PING ||
-            myMsg->protocol == PROTOCOL_PINGREPLY){
+         if (myMsg->protocol == PROTOCOL_IP ||
+             myMsg->protocol == PROTOCOL_PING ||
+             myMsg->protocol == PROTOCOL_PINGREPLY)
+         {
 
             call IP.receive(*myMsg);
             return msg;
@@ -145,22 +156,23 @@ implementation
    event void CommandHandler.ping(uint16_t destination, uint8_t *payload)
    {
       dbg(GENERAL_CHANNEL, "Node %d: Sending IP ping to %d\n",
-         TOS_NODE_ID, destination);
+          TOS_NODE_ID, destination);
 
-      call IP.send(destination, PROTOCOL_PING, payload, PACKET_MAX_PAYLOAD_SIZE);         
-
+      call IP.send(destination, PROTOCOL_PING, payload, PACKET_MAX_PAYLOAD_SIZE);
    }
 
-   event void NDiscovery.neighborChanged(){}
-   
+   event void NDiscovery.neighborChanged() {}
+
    event void CommandHandler.printNeighbors()
    {
       call NDiscovery.printNeighbors();
    }
 
-   event void CommandHandler.printRouteTable() {
-      call LinkState.printRoutingTable();
+   event void CommandHandler.printRouteTable()
+   {
+      call DistanceVector.printRoutingTable();
    }
+   event void DistanceVector.routeChanged() {}
 
    event void CommandHandler.printLinkState() {}
 
