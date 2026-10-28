@@ -1,3 +1,10 @@
+# Project 2 - Distance Vector Routing
+
+For Project 2 build instructions, test commands,
+constants, and simulation results, see
+[README_Project2.md](README_Project2.md).
+
+---
 # Introduction
 This skeleton code is the basis for the CSE160 network project. Additional documentation
 on what is expected will be provided as the school year continues.
