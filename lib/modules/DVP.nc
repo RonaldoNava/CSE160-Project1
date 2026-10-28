@@ -2,7 +2,7 @@
 #include <Timer.h>
 #include "../../includes/packet.h"
 #include "../../includes/channels.h"
-
+// uses neigbor discovery to determine which nodes are directly connected
 module DVP{provides interface DistanceVector;
 
 uses interface NDiscovery;
@@ -15,7 +15,8 @@ uses interface Random;
 
 implementation
 {
-
+    // cost of 16 means the destination is unreachable
+    // each packet can hold only part of the routing table
     enum
     {
         DV_INFINITY = 16,
@@ -31,7 +32,7 @@ implementation
         DV_ENTRIES_PER_PACKET = (PACKET_MAX_PAYLOAD_SIZE - DV_PACKET_HEADER) / DV_ENTRY_SIZE
     };
 
-    // Information stored for each known destination
+    // information stored for each known destination
     typedef struct
     {
         bool used;
@@ -41,7 +42,7 @@ implementation
         uint16_t withdrawUntil;
     } DVRoute;
 
-    // Last advertised cost for each destination from a neighbor
+    // last advertised cost for each destination from a neighbor
     typedef struct
     {
         bool used;
@@ -49,24 +50,25 @@ implementation
         uint8_t cost[DV_MAX_ROUTES];
         uint16_t seen[DV_MAX_ROUTES];
     } DVPeer;
-
+    // routing table holds the best route to each destination
     DVRoute routes[DV_MAX_ROUTES];
     DVPeer peers[DV_MAX_PEERS];
-
+    // save costs advertised by each neighbor
+    // ticks counts periodic update rounds, not individual packets
     uint16_t ticks = 1;
     uint16_t sequence = 0;
-
+    // add flags to help control when DV starts
     bool started = FALSE;
     bool advertising = FALSE;
     bool pendingRound = FALSE;
-
+    // remember which neighbor and which slot of the routing table is being sent
     uint8_t sendPeer = 0;
     uint8_t sendSlot = 0;
 
-    task void recalculateTask();
-    void requestUpdate();
+    task void updateRoutesTask();
+    void scheduleRouteUpdate();
 
-    // Find an existing destination in the routing table
+    // look through the routing table for a destination, return the index or -1 if not found
     int8_t findRoute(uint16_t destination)
     {
         uint8_t i;
@@ -82,8 +84,8 @@ implementation
         return -1;
     }
 
-    // Create an entry for a destination if it does not exist
-    int8_t ensureRoute(uint16_t destination)
+    // create an entry for a destination if it does not exist
+    int8_t addRouteIfMissing(uint16_t destination)
     {
         int8_t index;
         uint8_t i;
@@ -127,8 +129,8 @@ implementation
         return -1;
     }
 
-    // Find a neighbor in the advertised-vector cache
-    int8_t findPeer(uint16_t nodeID)
+    // find the saved advertisement for a specific neighbor
+    int8_t findNeighborInfo(uint16_t nodeID)
     {
         uint8_t i;
 
@@ -143,14 +145,14 @@ implementation
         return -1;
     }
 
-    // Allocate storage for a neighbor's distance vector
-    int8_t ensurePeer(uint16_t nodeID)
+    // give a neighbor space in our cache so we can remember its advertised costs
+    int8_t addNeighborIfMissing(uint16_t nodeID)
     {
         int8_t index;
         uint8_t i;
         uint8_t j;
 
-        index = findPeer(nodeID);
+        index = findNeighborInfo(nodeID);
         if (index >= 0)
         {
             return index;
@@ -180,8 +182,8 @@ implementation
         return -1;
     }
 
-    // Remove cached costs when a neighbor is no longer active
-    void forgetPeer(uint8_t peerIndex)
+    // if a neighbor is no longer active, clear the routes it told us about
+    void removeNeighborInfo(uint8_t peerIndex)
     {
         uint8_t i;
 
@@ -194,8 +196,9 @@ implementation
         }
     }
 
-    // Choose the lowest-cost route using neighbors' advertised distances
-    bool recompute()
+    // calculate my best routes using Bellman-Ford
+    // for each destination, compare direct links and the costs with my neighbors sent
+    bool updateRoutingTable()
     {
         uint8_t routeIndex;
         uint8_t peerIndex;
@@ -217,14 +220,14 @@ implementation
             destination = routes[routeIndex].dest;
             previous = routes[routeIndex].cost;
             oldNext = routes[routeIndex].nextHop;
-
+            // a node is zero hops away from itself
             if (destination == TOS_NODE_ID)
             {
                 best = 0;
             }
             else
             {
-                // A direct active neighbor has cost 1
+                // a direct active neighbor has cost 1
                 if (call NDiscovery.isCurrentNeighbor(destination))
                 {
                     best = 1;
@@ -240,13 +243,13 @@ implementation
                     {
                         continue;
                     }
-
+                    // ignore a neighbor's route if we haven't hear about it recently or if it is unreachable
                     if (peers[peerIndex].seen[routeIndex] == 0 ||
                         (uint16_t)(ticks - peers[peerIndex].seen[routeIndex]) >= DV_EXPIRE_TICKS)
                     {
                         continue;
                     }
-
+                    // a cost of 16 meas that neighbor does not have a usable path
                     if (peers[peerIndex].cost[routeIndex] >= DV_INFINITY)
                     {
                         continue;
@@ -257,8 +260,8 @@ implementation
                     {
                         continue;
                     }
-
-                    // Keep the current next hop when equal-cost paths exist
+                    // choose lowest cost. if cost match, try to keep our old next hop.
+                    // helps stop route from switching back and forth for no reason
                     if (candidate < best ||
                         (candidate == best && peers[peerIndex].node == oldNext))
                     {
@@ -267,16 +270,18 @@ implementation
                     }
                 }
             }
-
+            // only update routing table if cost or next hop changed
             if (best != previous || next != oldNext)
             {
                 routes[routeIndex].cost = best;
                 routes[routeIndex].nextHop = next;
-
+                // if working route becomes unreachable, keep it temporarily
+                // gives us time to tell neighbors that its cost is now 16
                 if (best == DV_INFINITY && previous != DV_INFINITY)
                 {
                     routes[routeIndex].withdrawUntil = ticks + DV_WITHDRAW_TICKS;
                 }
+                // if we find a working route again, cancel withdrawal timer
                 else if (best != DV_INFINITY)
                 {
                     routes[routeIndex].withdrawUntil = 0;
@@ -293,8 +298,9 @@ implementation
         return changed;
     }
 
-    // Schedule a short randomized triggered advertisement
-    void requestUpdate()
+    // when a route changes, schedule another advertisement right after
+    // small delay helps keep nodes from transmitting at the same time
+    void scheduleRouteUpdate()
     {
         if (!started)
         {
@@ -307,8 +313,9 @@ implementation
         }
     }
 
-    // Update routes outside the receive and neighbor-change handlers
-    task void recalculateTask()
+    // run the route calculation as a task instead of directly in receive events
+    // first remove inactive neighbors, then check if best routes changed
+    task void updateRoutesTask()
     {
         uint8_t peerIndex;
 
@@ -317,19 +324,20 @@ implementation
             if (peers[peerIndex].used &&
                 !call NDiscovery.isCurrentNeighbor(peers[peerIndex].node))
             {
-                forgetPeer(peerIndex);
+                removeNeighborInfo(peerIndex);
             }
         }
 
-        if (recompute())
+        if (updateRoutingTable())
         {
             signal DistanceVector.routeChanged();
-            requestUpdate();
+            scheduleRouteUpdate();
         }
     }
 
-    // Begin sending a new vector to every active neighbor
-    void beginRound()
+    // start sending routing updates to every active neighbor
+    // if a round is already being sent, remember to send another after
+    void startUpdateRound()
     {
         if (advertising)
         {
@@ -343,7 +351,8 @@ implementation
 
         call sendTimer.startOneShot(1 + (call Random.rand16() % 200));
     }
-
+    // reset routing info when dv starts
+    // add a route with zero cost to our own node and start periodic timer
     command void DistanceVector.start()
     {
         uint8_t routeIndex;
@@ -365,14 +374,15 @@ implementation
             peers[peerIndex].used = FALSE;
         }
 
-        ensureRoute(TOS_NODE_ID);
-        recompute();
+        addRouteIfMissing(TOS_NODE_ID);
+        updateRoutingTable();
 
         started = TRUE;
         call periodicTimer.startPeriodic(DV_UPDATE_MS);
-        requestUpdate();
+        scheduleRouteUpdate();
     }
-
+    // neighbor discover tells us when the neighbor list changes
+    // save active neighbors and recalculate routes
     event void NDiscovery.neighborChanged()
     {
         uint8_t i;
@@ -382,19 +392,19 @@ implementation
         bool active;
 
         count = call NDiscovery.getNeighborCount();
-
+        // go through current neighbor list and save active neighbors
         for (i = 0; i < count; i++)
         {
             if (call NDiscovery.getNeighbor(i, &nodeID, &quality, &active) && active)
             {
-                ensureRoute(nodeID);
-                ensurePeer(nodeID);
+                addRouteIfMissing(nodeID);
+                addNeighborIfMissing(nodeID);
             }
         }
 
-        post recalculateTask();
+        post updateRoutesTask();
     }
-
+    // every 10 secs, check old advertisements and start another update round
     event void periodicTimer.fired()
     {
         uint8_t routeIndex;
@@ -402,7 +412,7 @@ implementation
 
         ticks++;
 
-        // Expire old neighbor advertisements
+        // expire old neighbor advertisements
         for (peerIndex = 0; peerIndex < DV_MAX_PEERS; peerIndex++)
         {
             if (!peers[peerIndex].used)
@@ -412,12 +422,14 @@ implementation
 
             if (!call NDiscovery.isCurrentNeighbor(peers[peerIndex].node))
             {
-                forgetPeer(peerIndex);
+                removeNeighborInfo(peerIndex);
                 continue;
             }
 
             for (routeIndex = 0; routeIndex < DV_MAX_ROUTES; routeIndex++)
             {
+                // if a nighbor has not refreshed this destination for five rounds, expire it
+                // also works when the neighbor itself is still active
                 if (peers[peerIndex].seen[routeIndex] &&
                     (uint16_t)(ticks - peers[peerIndex].seen[routeIndex]) >= DV_EXPIRE_TICKS)
                 {
@@ -427,11 +439,12 @@ implementation
             }
         }
 
-        post recalculateTask();
+        post updateRoutesTask();
 
-        // Reclaim unreachable destinations after the withdrawal interval
         for (routeIndex = 0; routeIndex < DV_MAX_ROUTES; routeIndex++)
         {
+            // renove routes that have stayed unreachable past the withdrawal deadline
+            // clear matching cache values so the slot can be used again
             if (routes[routeIndex].used &&
                 routes[routeIndex].cost == DV_INFINITY &&
                 routes[routeIndex].withdrawUntil &&
@@ -447,15 +460,16 @@ implementation
             }
         }
 
-        beginRound();
+        startUpdateRound();
     }
-
+    // send an update soon after a change instead of waiting for the next 10 seconds
     event void triggerTimer.fired()
     {
-        beginRound();
+        startUpdateRound();
     }
 
-    // Send a bounded portion of the vector to one neighbor at a time
+    // send one part of the routing table to one neighbor at a time
+    // the short spacing between sends helps avoid too many packets at once
     event void sendTimer.fired()
     {
         pack msg;
@@ -472,7 +486,7 @@ implementation
         {
             return;
         }
-
+        // when all neighbors have been handled, finish this update round
         if (sendPeer >= count)
         {
             advertising = FALSE;
@@ -480,7 +494,7 @@ implementation
             if (pendingRound)
             {
                 pendingRound = FALSE;
-                beginRound();
+                startUpdateRound();
             }
             return;
         }
@@ -492,7 +506,8 @@ implementation
             call sendTimer.startOneShot(DV_SEND_SPACING_MS);
             return;
         }
-
+        // build a one-hop dv control packet addressed to this neighbor
+        // dv updates aren't forwarded across the network like flooded packets
         memset(&msg, 0, sizeof(msg));
         msg.src = TOS_NODE_ID;
         msg.dest = recipient;
@@ -503,7 +518,8 @@ implementation
         msg.payload[1] = 0;
 
         routeIndex = sendSlot;
-
+        // put as many route entries as will fit into this advertisement
+        // if the table is larger, the next timer event sends another packet
         while (routeIndex < DV_MAX_ROUTES && entryCount < DV_ENTRIES_PER_PACKET)
         {
             if (routes[routeIndex].used)
@@ -512,12 +528,13 @@ implementation
                 uint8_t cost = routes[routeIndex].cost;
                 uint8_t offset = DV_PACKET_HEADER + entryCount * DV_ENTRY_SIZE;
 
-                // Poison the route when advertising to the selected next hop
+                // Poison reverse: if this neighbor is our next hop for the route
+                // advertise cost 16 back to it so it does not try to route through us
                 if (destination != TOS_NODE_ID && routes[routeIndex].nextHop == recipient)
                 {
                     cost = DV_INFINITY;
                 }
-
+                // store the destination ID in two bytes plus its advertised cost
                 msg.payload[offset] = (uint8_t)(destination & 0xff);
                 msg.payload[offset + 1] = (uint8_t)(destination >> 8);
                 msg.payload[offset + 2] = cost;
@@ -533,7 +550,7 @@ implementation
 
         sendSlot = routeIndex;
         msg.payload[1] = entryCount;
-
+        // send the packet only if it contains at least one route entry
         if (entryCount)
         {
             if (call Sender.send(msg, recipient) != SUCCESS)
@@ -543,7 +560,7 @@ implementation
                     TOS_NODE_ID, recipient);
             }
         }
-
+        // once this neighbor has received all parts, move to the next neighbor
         if (sendSlot >= DV_MAX_ROUTES)
         {
             sendSlot = 0;
@@ -553,7 +570,8 @@ implementation
         call sendTimer.startOneShot(DV_SEND_SPACING_MS);
     }
 
-    // Process a one-hop advertisement without flooding or forwarding it
+    // handle a dv update sent directly by one of our active neighbors
+    // check the packet first, then save only the destination it actually includes
     command void DistanceVector.receive(pack msg, uint16_t linkSource)
     {
         uint8_t count;
@@ -564,34 +582,36 @@ implementation
         {
             return;
         }
-
+        // ignor packets from ourselves or nodes that arent active neighbors
         if (linkSource == TOS_NODE_ID || !call NDiscovery.isCurrentNeighbor(linkSource))
         {
             return;
         }
-
+        // a dv update should be addressed to us and sent only over one hop
         if (msg.dest != TOS_NODE_ID || msg.TTL != 1)
         {
             return;
         }
-
+        // make sure we understand the format of this update
         if (msg.payload[0] != DV_PAYLOAD_VERSION)
         {
             return;
         }
 
         count = msg.payload[1];
+        // dont read more entries than this packet has space for
         if (count > DV_ENTRIES_PER_PACKET)
         {
             return;
         }
 
-        peerIndex = ensurePeer(linkSource);
+        peerIndex = addNeighborIfMissing(linkSource);
         if (peerIndex < 0)
         {
             return;
         }
-
+        // read each destination and cost from the received packet
+        // missing entries are left alone, since updates can span several packets
         for (i = 0; i < count; i++)
         {
             uint8_t offset = DV_PACKET_HEADER + i * DV_ENTRY_SIZE;
@@ -607,6 +627,7 @@ implementation
             }
 
             routeIndex = findRoute(destination);
+            // do not create a new routing table entry just for an unreachable route
             if (routeIndex < 0 && cost == DV_INFINITY)
             {
                 continue;
@@ -614,21 +635,22 @@ implementation
 
             if (routeIndex < 0)
             {
-                routeIndex = ensureRoute(destination);
+                routeIndex = addRouteIfMissing(destination);
             }
 
             if (routeIndex < 0)
             {
                 continue;
             }
-
+            // remember this neighbor's advertised cost and when we last heard it
             peers[peerIndex].cost[routeIndex] = cost;
             peers[peerIndex].seen[routeIndex] = ticks;
         }
 
-        post recalculateTask();
+        post updateRoutesTask();
     }
-
+    // IP calls this to find which neighbor should receive the next packet
+    // return zero if theres no working route or the next hop is inactive
     command uint16_t DistanceVector.getNextHop(uint16_t destination)
     {
         int8_t routeIndex;
@@ -646,7 +668,7 @@ implementation
 
         return routes[routeIndex].nextHop;
     }
-
+    // return the number of hops for a destination, or 16 if unknown
     command uint8_t DistanceVector.getCost(uint16_t destination)
     {
         int8_t routeIndex;
@@ -659,7 +681,8 @@ implementation
 
         return routes[routeIndex].cost;
     }
-
+    // print the routing table for routeDMP during sims
+    // show INF when a destination is currently unreachable
     command void DistanceVector.printRoutingTable()
     {
         uint8_t routeIndex;
