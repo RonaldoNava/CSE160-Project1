@@ -3,14 +3,15 @@
 #include "../../includes/packet.h"
 #include "../../includes/channels.h"
 // uses neigbor discovery to determine which nodes are directly connected
-module DVP{provides interface DistanceVector;
+module DVP{
+    provides interface DistanceVector;
 
-uses interface NDiscovery;
-uses interface SimpleSend as Sender;
-uses interface Timer<TMilli> as periodicTimer;
-uses interface Timer<TMilli> as sendTimer;
-uses interface Timer<TMilli> as triggerTimer;
-uses interface Random;
+    uses interface NDiscovery;
+    uses interface SimpleSend as Sender;
+    uses interface Timer<TMilli> as periodicTimer;
+    uses interface Timer<TMilli> as sendTimer;
+    uses interface Timer<TMilli> as triggerTimer;
+    uses interface Random;
 }
 
 implementation
@@ -249,7 +250,7 @@ implementation
                     {
                         continue;
                     }
-                    // a cost of 16 meas that neighbor does not have a usable path
+                    // a cost of 16 means that neighbor does not have a usable path
                     if (peers[peerIndex].cost[routeIndex] >= DV_INFINITY)
                     {
                         continue;
@@ -318,7 +319,7 @@ implementation
     task void updateRoutesTask()
     {
         uint8_t peerIndex;
-
+        //remove stale entries (being used & no longer active)
         for (peerIndex = 0; peerIndex < DV_MAX_PEERS; peerIndex++)
         {
             if (peers[peerIndex].used &&
@@ -327,9 +328,10 @@ implementation
                 removeNeighborInfo(peerIndex);
             }
         }
-
+        // bellman-ford if any selected route changes
         if (updateRoutingTable())
         {
+            //notify other modules then schedule advertisement
             signal DistanceVector.routeChanged();
             scheduleRouteUpdate();
         }
@@ -438,7 +440,7 @@ implementation
                 }
             }
         }
-
+        //schedule bellman ford to run
         post updateRoutesTask();
 
         for (routeIndex = 0; routeIndex < DV_MAX_ROUTES; routeIndex++)

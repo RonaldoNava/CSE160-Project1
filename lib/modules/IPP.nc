@@ -95,6 +95,6 @@ implementation
     }
     event void DistanceVector.routeChanged()
     {
-        // IP looks up routes whenever it sends or forwards a packet
+        //IP looks up routes whenever it sends or forwards a packet
     }
 }
