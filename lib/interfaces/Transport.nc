@@ -1,4 +1,4 @@
-#include "../../packet.h"
+#include "../../includes/packet.h"
 #include "../../includes/socket.h"
 
 /**
@@ -144,4 +144,18 @@ interface Transport{
     *   to listen else FAIL.
     */
    command error_t listen(socket_t fd);
+
+   event void connectDone(socket_t fd, error_t result);
+
+   event void accepted(socket_t listener, socket_t connection);
+
+   command void start();
+
+   command void dropNextData();
+
+   command socket_t lookup(uint16_t remote, uint8_t localPort, uint8_t remotePort);
+
+   event void acknowledged(socket_t fd, uint16_t count);
+
+   event void closed(socket_t fd, error_t result);
 }

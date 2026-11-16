@@ -43,12 +43,6 @@ implementation
     FloodingC.Sender->SenderC;
     FloodingC.NDiscovery->NDiscoveryC;
 
-    // project 2 link state routing
-    // components LSC;
-    // Node.LinkState->LSC.LinkState;
-    // LSC.NDiscovery->NDiscoveryC;
-    // LSC.Flooding->FloodingC;
-
     // new project 2 distance vector routing
     components DVC;
     Node.DistanceVector->DVC.DistanceVector;
@@ -60,4 +54,14 @@ implementation
     // IPC.LinkState->LSC.LinkState;
     IPC.DistanceVector->DVC.DistanceVector;
     IPC.Sender->SenderC;
+
+    //project 3 reliable transport
+    components TransportC;
+
+    Node.Transport -> TransportC.Transport;
+    TransportC.IP -> IPC.IP;
+    
+    components new TimerMilliC() as TestTimer;
+
+    Node.testTimer -> TestTimer;
 }

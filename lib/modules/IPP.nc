@@ -12,6 +12,8 @@ uses interface SimpleSend as Sender;
 implementation
 {
 
+    uint16_t networkSeq = 0;
+
     command error_t IP.send(uint16_t dest, uint8_t protocol, uint8_t *payload, uint8_t len)
     {
         pack msg;
@@ -39,7 +41,7 @@ implementation
 
         msg.src = TOS_NODE_ID;
         msg.dest = dest;
-        msg.seq = 0;
+        msg.seq = ++networkSeq;
         msg.TTL = MAX_TTL;
         msg.protocol = protocol;
 

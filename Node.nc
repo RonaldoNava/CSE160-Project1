@@ -7,11 +7,13 @@
  *
  */
 #include <Timer.h>
+#include <string.h>
 #include "includes/command.h"
 #include "includes/packet.h"
 #include "includes/CommandMsg.h"
 #include "includes/sendInfo.h"
 #include "includes/channels.h"
+#include "includes/socket.h"
 
 module Node{uses interface Boot;
 
@@ -27,10 +29,19 @@ uses interface Flooding;   // added for Flooding
 // uses interface LinkState;
 uses interface DistanceVector;
 uses interface IP;
+uses interface Transport;
+uses interface Timer<TMilli> as testTimer;
 }
 
 implementation
 {
+   typedef struct {
+      bool used, producer, ready;
+      uint16_t target, accepted, acked, consumed, mismatches;
+   } TestConnection;
+
+   TestConnection testConnections[MAX_NUM_OF_SOCKETS + 1];
+   
    pack sendPackage;
 
    // Prototypes
@@ -43,6 +54,8 @@ implementation
       call Flooding.start();   // start Flooding
       // call LinkState.start(); start link state routing
       call DistanceVector.start(); // start distance vector routing
+      call Transport.start();
+      call testTimer.startPeriodic(200);
 
       dbg(GENERAL_CHANNEL, "Booted\n");
    }
@@ -106,6 +119,9 @@ implementation
       {
          dbg(ROUTING_CHANNEL, "Node %d: Received IP PingReply from %d, payload %s\n",
              TOS_NODE_ID, msg.src, msg.payload);
+
+         dbg("Project3TGen", "t=%lu node=%u PING_REPLY from=%u\n", (unsigned long)call testTimer.getNow(),
+            TOS_NODE_ID, msg.src);
       }
    }
 
@@ -137,9 +153,9 @@ implementation
          }
          if (myMsg->protocol == PROTOCOL_IP ||
              myMsg->protocol == PROTOCOL_PING ||
-             myMsg->protocol == PROTOCOL_PINGREPLY)
+             myMsg->protocol == PROTOCOL_PINGREPLY ||
+             myMsg->protocol == PROTOCOL_TCP)
          {
-
             call IP.receive(*myMsg);
             return msg;
          }
@@ -178,9 +194,31 @@ implementation
 
    event void CommandHandler.printDistanceVector() {}
 
-   event void CommandHandler.setTestServer() {}
+   event void CommandHandler.setTestServer(uint8_t port) {
+      socket_t fd = call Transport.socket();
+      socket_addr_t local;
+      local.addr=TOS_NODE_ID; local.port=port;
+      if(!fd || call Transport.bind(fd,&local)!=SUCCESS || call Transport.listen(fd)!=SUCCESS) {
+         if(fd) call Transport.release(fd);
+         dbg("Project3TGen","t=%lu node=%u SERVER_FAIL port=%u\n",(unsigned long)call testTimer.getNow(),TOS_NODE_ID,port);
+      }
+   }
 
-   event void CommandHandler.setTestClient() {}
+   event void CommandHandler.setTestClient(uint16_t server, uint8_t srcPort, uint8_t destPort, uint16_t total) {
+      socket_t fd=call Transport.socket();
+      socket_addr_t local, remote;
+      local.addr=TOS_NODE_ID; local.port=srcPort; remote.addr=server; remote.port=destPort;
+      if(!fd || !total || total>60000U) {
+         if(fd) call Transport.release(fd);
+         dbg("Project3TGen","t=%lu node=%u CLIENT_FAIL allocation/length\n",(unsigned long)call testTimer.getNow(),TOS_NODE_ID); return;
+      }
+      memset(&testConnections[fd],0,sizeof(TestConnection));
+      testConnections[fd].used=TRUE; testConnections[fd].producer=TRUE; testConnections[fd].target=total;
+      if(call Transport.bind(fd,&local)!=SUCCESS || call Transport.connect(fd,&remote)!=SUCCESS) {
+         testConnections[fd].used=FALSE; call Transport.release(fd);
+         dbg("Project3TGen","t=%lu node=%u CLIENT_FAIL bind/connect\n",(unsigned long)call testTimer.getNow(),TOS_NODE_ID);
+      }
+   }
 
    event void CommandHandler.setAppServer() {}
 
@@ -194,5 +232,74 @@ implementation
       Package->seq = seq;
       Package->protocol = protocol;
       memcpy(Package->payload, payload, length);
+   }
+
+    // Project 3 test application, separate from the transport engine.
+
+   bool validTestFd(socket_t fd) { return fd > 0 && fd <= MAX_NUM_OF_SOCKETS; }
+
+
+   event void CommandHandler.clientClose(uint16_t server,uint8_t srcPort,uint8_t destPort) {
+      socket_t fd=call Transport.lookup(server,srcPort,destPort);
+      if(validTestFd(fd) && testConnections[fd].used && testConnections[fd].accepted==testConnections[fd].target) {
+         if(call Transport.close(fd)==SUCCESS) {
+            dbg("Project3TGen","t=%lu node=%u fd=%u CLOSE_REQUEST\n",(unsigned long)call testTimer.getNow(),TOS_NODE_ID,fd); return;
+         }
+      }
+      dbg("Project3TGen","t=%lu node=%u CLOSE_FAIL not ready\n",(unsigned long)call testTimer.getNow(),TOS_NODE_ID);
+   }
+
+
+   event void CommandHandler.testDropData() {
+      call Transport.dropNextData();
+   }
+
+   event void Transport.connectDone(socket_t fd,error_t result) {
+      if(validTestFd(fd) && testConnections[fd].used) testConnections[fd].ready=(result==SUCCESS);
+   }
+   
+   event void Transport.accepted(socket_t listener,socket_t connection) {
+      if(!validTestFd(connection)) return;
+      memset(&testConnections[connection],0,sizeof(TestConnection));
+      testConnections[connection].used=TRUE; testConnections[connection].ready=TRUE;
+   }
+
+   event void Transport.acknowledged(socket_t fd,uint16_t count) {
+      if(!validTestFd(fd) || !testConnections[fd].used) return;
+      testConnections[fd].acked+=count;
+      dbg("Project3TGen","t=%lu node=%u fd=%u ACKED total=%u\n",(unsigned long)call testTimer.getNow(),TOS_NODE_ID,fd,testConnections[fd].acked);
+   }
+
+   event void Transport.closed(socket_t fd,error_t result) {
+      TestConnection *c;
+      if(!validTestFd(fd) || !testConnections[fd].used) return;
+      c=&testConnections[fd];
+      dbg("Project3TGen","t=%lu node=%u fd=%u APP_FINAL result=%s accepted=%u acked=%u consumed=%u mismatches=%u\n",
+          (unsigned long)call testTimer.getNow(),TOS_NODE_ID,fd,result==SUCCESS?"OK":"FAIL",c->accepted,c->acked,c->consumed,c->mismatches);
+      c->used=FALSE;
+   }
+
+   event void testTimer.fired() {
+      socket_t fd; uint8_t bytes[16]; uint16_t n,i,remaining; TestConnection *c;
+      for(fd=1;fd<=MAX_NUM_OF_SOCKETS;fd++) {
+         c = &testConnections[fd];
+         if(!c->used || !c->ready)
+            continue;
+         if(c->producer && c->accepted<c->target) {
+            remaining=c->target-c->accepted;
+            n=remaining>sizeof(bytes)?sizeof(bytes):remaining;
+            for(i=0;i<n;i++) bytes[i]=(uint8_t)(c->accepted+i);
+            n=call Transport.write(fd,bytes,n); c->accepted+=n;
+            if(n) dbg("Project3TGen","t=%lu node=%u fd=%u ACCEPTED total=%u\n",(unsigned long)call testTimer.getNow(),TOS_NODE_ID,fd,c->accepted);
+         }
+         n = call Transport.read(fd,bytes,sizeof(bytes));
+         if(n) {
+            for(i=0;i<n;i++)
+             if(bytes[i]!=(uint8_t)(c->consumed+i)) c->mismatches++;
+            c->consumed+=n;
+            dbg("Project3TGen","t=%lu node=%u fd=%u CONSUMED chunk=%u total=%u mismatches=%u\n",
+                (unsigned long)call testTimer.getNow(),TOS_NODE_ID,fd,n,c->consumed,c->mismatches);
+         }
+      }
    }
 }
