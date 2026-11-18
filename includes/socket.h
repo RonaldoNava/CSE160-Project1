@@ -2,7 +2,7 @@
 #define __SOCKET_H__
 
 enum{
-    MAX_NUM_OF_SOCKETS = 10,
+    MAX_NUM_OF_SOCKETS = 3,
     ROOT_SOCKET_ADDR = 255,
     ROOT_SOCKET_PORT = 255,
     SOCKET_BUFFER_SIZE = 128,
@@ -14,8 +14,22 @@ enum socket_state{
     ESTABLISHED,
     SYN_SENT,
     SYN_RCVD,
+
+    FIN_WAIT_1,
+    FIN_WAIT_2,
+    CLOSE_WAIT,
+    CLOSING,
+    LAST_ACK,
+    TIME_WAIT,
 };
 
+enum {
+    TRANSPORT_RTO_MS = 3000,
+    TRANSPORT_MAX_RETRIES = 5,
+    TRANSPORT_TIMER_MS = 100,
+    TRANSPORT_TIME_WAIT_MS = 20000,
+    TRANSPORT_STALL_MS = 60000
+};
 
 typedef nx_uint8_t nx_socket_port_t;
 typedef uint8_t socket_port_t;
@@ -32,25 +46,55 @@ typedef uint8_t socket_t;
 
 // State of a socket. 
 typedef struct socket_store_t{
-    uint8_t flag;
+    bool used;
     enum socket_state state;
+    uint16_t localAddr;
     socket_port_t src;
     socket_addr_t dest;
 
+    //Connection establishment
+    uint16_t localISN;
+    uint16_t remoteISN;
+    bool synSubmitted;
+    bool activeOpen;
+
     // This is the sender portion.
     uint8_t sendBuff[SOCKET_BUFFER_SIZE];
-    uint8_t lastWritten;
-    uint8_t lastAck;
-    uint8_t lastSent;
+  
+    //Sender sequence number
+    uint16_t sendBase; //last unacknowledged byte/seq num
+    uint16_t nextSend; //next expected byte to be sent
+    uint16_t writeEnd; //everything that is going to be sent (can be in queue)
+
+    //Sender flow control
+    uint8_t sendWindow;
+    uint8_t peerWindow;
 
     // This is the receiver portion
     uint8_t rcvdBuff[SOCKET_BUFFER_SIZE];
-    uint8_t lastRead;
-    uint8_t lastRcvd;
-    uint8_t nextExpected;
+    uint16_t readBase;
+    uint16_t nextExpected;
 
-    uint16_t RTT;
-    uint8_t effectiveWindow;
+    // Retransmission tracking
+    bool timerActive; //whether it's waiting for an ACK
+    uint32_t retransmissionDeadline; //DATA sent (timer starts) -> 3 second retransmission timeout-> deadline
+    uint8_t retryCount; //bounded failure handling
+
+    // Connection teardown tracking
+    bool closeRequested;
+    bool finSent;
+    bool finAcknowledged;
+    bool finReceived;
+
+    uint16_t finSeq;
+    uint32_t timeWaitDeadline;
+
+    bool acceptedPending;
+
+    bool ackPending;
+    bool failed;
+    uint32_t progressDeadline;
+
 }socket_store_t;
 
 #endif

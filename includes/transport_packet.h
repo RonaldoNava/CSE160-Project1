@@ -6,14 +6,14 @@
 /*
  * Project 3 compact transport header.
  *
- * The on-wire layout is exactly 9 bytes, encoded explicitly in
- * msg.payload[] rather than by copying a padded C structure.
+ * Is exactly 9 bytes, encoded explicitly in
+ * msg.payload[] rather than by copying a padded C struct
  *
  * Byte 0: source port (uint8_t)
  * Byte 1: destination port (uint8_t)
  * Byte 2: flags (bit mask)
- * Bytes 3-4: sequence number (uint16_t, network/big-endian order)
- * Bytes 5-6: acknowledgment number (uint16_t, network/big-endian order)
+ * Bytes 3-4: seq number (uint16_t)
+ * Bytes 5-6: acknowledgment number (uint16_t)
  * Byte 7: advertised receive window (uint8_t)
  * Byte 8: data length (uint8_t)
  * Bytes 9+: application data, exactly data length bytes
@@ -39,9 +39,6 @@ enum {
     TP_HEADER_SIZE = 9,
     TP_MAX_DATA_SIZE = PACKET_MAX_PAYLOAD_SIZE - TP_HEADER_SIZE,
 
-    TP_SEND_BUFFER_SIZE = 128,
-    TP_RECV_BUFFER_SIZE = 128,
-    TP_MIN_CONNECTED_RECORDS = 2
 };
 
-#endif /* CSE160_TRANSPORT_PACKET_H */
+#endif

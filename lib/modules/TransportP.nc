@@ -12,6 +12,9 @@ module TransportP {
 }
 
 implementation {
+// #region Structs and Variables
+ //(Provides)
+    void enterTimeWait(socket_store_t *s);
 
     typedef struct {
         uint8_t srcPort, destPort, flags;
@@ -26,9 +29,10 @@ implementation {
     socket_store_t sockets[MAX_NUM_OF_SOCKETS];
 
     bool testDropNextData = FALSE;
-    command void Transport.dropNextData() {
-        testDropNextData = TRUE;
-    }
+
+// #endregion
+
+// #region Packet Encoding and Decoding
     //encode 16-bit seq or ack numbers (each position in payload arr can only hold one byte)
     void encode16(uint8_t *output, uint16_t value){
         output[0] = (uint8_t)(value >> 8);
@@ -124,11 +128,11 @@ implementation {
         return TRUE;
 
     }
+// #endregion
 
-    int8_t findConnection(uint16_t localAddr,
-                          uint8_t localPort,
-                          uint16_t remoteAddr,
-                          uint8_t remotePort) {
+// #region Socket Lookup and Allocation
+    int8_t findConnection(uint16_t localAddr, uint8_t localPort,
+                          uint16_t remoteAddr, uint8_t remotePort) {
         uint8_t i;
 
         for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
@@ -190,6 +194,9 @@ implementation {
         return fd -1;
     }
 
+// #endregion
+
+// #region Timer and Sequence Helpers
     uint32_t now() {
         return call transportTimer.getNow();
     }
@@ -217,17 +224,16 @@ implementation {
 
     uint16_t ackNumber(socket_store_t *s) {
         return s->nextExpected + (s->finReceived ? 1 : 0);
-        }
-
-    uint16_t controlSeq(socket_store_t *s) {
-        return s->nextSend + (s->finSent ? 1 : 0);
-        }
+    }
 
     void logState(socket_store_t *s, char *eventName) {
         dbg("Project3TGen", "t=%lu node=%u conn=%u:%u->%u:%u fd=%u %s\n", (unsigned long)now(),
             TOS_NODE_ID, s->localAddr, s->src, s->dest.addr, s->dest.port, (unsigned int)(s-sockets+1), eventName);
     }
 
+// #endregion 
+
+// #region Packet Transmission
     error_t sendSegment(uint16_t destination, TransportSegment *segment){
         uint8_t payload[PACKET_MAX_PAYLOAD_SIZE];
         uint8_t length;
@@ -257,6 +263,47 @@ implementation {
         return sendSegment(s->dest.addr, &segment);    
     }
 
+    void sendAck(socket_store_t *s) {
+        uint16_t seq = s->nextSend;
+
+        if (s->finSent)
+            seq++;
+
+        s->ackPending = sendControl(s, TP_FLAG_ACK, seq, ackNumber(s)) != SUCCESS;
+    }
+
+    error_t sendData(socket_store_t *s, uint16_t seq, uint8_t length, bool retry) {
+        TransportSegment segment;
+        uint8_t i;
+
+        segment.srcPort = s->src;
+        segment.destPort = s->dest.port;
+        segment.flags = TP_FLAG_DATA;
+        segment.seq = seq;
+        segment.ack = 0;
+        segment.window = window(s);
+        segment.length = length;
+
+        for (i = 0; i < length; i++) {
+            segment.data[i] = s->sendBuff[(seq + i) % SOCKET_BUFFER_SIZE];
+        }
+
+        if (sendSegment(s->dest.addr, &segment) != SUCCESS)
+            return FAIL;
+
+        dbg("Project3TGen", "t=%lu node=%u conn=%u:%u->%u:%u %s seq=%u len=%u peerWnd=%u\n",
+            (unsigned long)now(), TOS_NODE_ID, s->localAddr, s->src, s->dest.addr, s->dest.port,
+            retry ? "DATA_RETX" : "DATA_TX", seq, length, s->peerWindow);
+        return SUCCESS;
+    }
+
+// #endregion
+
+// #region Socket Management
+    //start the shared transport timer (each socket has its own deadline).
+    command void Transport.start() {
+        call transportTimer.startPeriodic(TRANSPORT_TIMER_MS);
+    }
 
     command socket_t Transport.socket(){
         int8_t index = allocateSocket();
@@ -285,6 +332,52 @@ implementation {
         return SUCCESS;
     }
 
+    command error_t Transport.listen(socket_t fd) {
+        int8_t index = socketIndex(fd);
+        socket_store_t *s;
+
+        if (index < 0)
+            return FAIL;
+
+        s = &sockets[index];
+        if (s->state != CLOSED || s->src == 0)
+            return FAIL;
+
+        if (findListener(s->localAddr, s->src) >= 0)
+            return FAIL;
+
+        s->state = LISTEN;
+        logState(s, "LISTEN");
+        return SUCCESS;
+    }
+
+        command socket_t Transport.accept(socket_t fd) {
+        int8_t index = socketIndex(fd);
+        uint8_t i;
+
+        if (index < 0 || sockets[index].state != LISTEN)
+            return 0;
+
+        for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+            if (sockets[i].used && sockets[i].state == ESTABLISHED &&
+                sockets[i].src == sockets[index].src && sockets[i].acceptedPending) {
+                sockets[i].acceptedPending = FALSE;
+                return i + 1;
+            }
+        }
+        return 0;
+    }
+
+    command socket_t Transport.lookup(uint16_t remote, uint8_t localPort, uint8_t remotePort) {
+        int8_t index = findConnection(TOS_NODE_ID, localPort, remote, remotePort);
+        if (index < 0)
+            return 0;
+        return index + 1;
+    }
+
+// #endregion
+
+// #region Three-Way Handshake
     command error_t Transport.connect(socket_t fd, socket_addr_t *addr){
         int8_t index = socketIndex(fd);
         socket_store_t *s;
@@ -345,6 +438,8 @@ implementation {
         
         return result;
     }
+
+
 
     void handleSyn(uint16_t source, TransportSegment *segment) {
 
@@ -491,6 +586,7 @@ implementation {
         signal Transport.connectDone(index + 1, SUCCESS);
     }
 
+
     void handleHandshakeAck(uint16_t source, TransportSegment *segment) {
         int8_t index;
         int8_t listener;
@@ -503,7 +599,7 @@ implementation {
 
         s = &sockets[index];
 
-        // Validate the final ACK
+        //validate the final ACK
         if (s->state != SYN_RCVD ||
             !s->synSubmitted ||
             segment->flags != TP_FLAG_ACK ||
@@ -514,7 +610,7 @@ implementation {
 
         s->peerWindow = segment->window;
 
-        // Complete server-side setup
+        //complete server-side setup
         s->timerActive = FALSE;
         s->retryCount = 0;
         s->state = ESTABLISHED;
@@ -536,56 +632,10 @@ implementation {
         }
     }
 
-    
-    // Start the shared transport timer (each socket has its own deadline).
-    command void Transport.start() {
-        call transportTimer.startPeriodic(TRANSPORT_TIMER_MS);
-    }
+// #endregion
 
-    command error_t Transport.listen(socket_t fd) {
-        int8_t index = socketIndex(fd);
-        socket_store_t *s;
-
-        if (index < 0)
-            return FAIL;
-
-        s = &sockets[index];
-        if (s->state != CLOSED || s->src == 0)
-            return FAIL;
-
-        if (findListener(s->localAddr, s->src) >= 0)
-            return FAIL;
-
-        s->state = LISTEN;
-        logState(s, "LISTEN");
-        return SUCCESS;
-    }
-
-    command socket_t Transport.accept(socket_t fd) {
-        int8_t index = socketIndex(fd);
-        uint8_t i;
-
-        if (index < 0 || sockets[index].state != LISTEN)
-            return 0;
-
-        for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
-            if (sockets[i].used && sockets[i].state == ESTABLISHED &&
-                sockets[i].src == sockets[index].src && sockets[i].acceptedPending) {
-                sockets[i].acceptedPending = FALSE;
-                return i + 1;
-            }
-        }
-        return 0;
-    }
-
-    command socket_t Transport.lookup(uint16_t remote, uint8_t localPort, uint8_t remotePort) {
-        int8_t index = findConnection(TOS_NODE_ID, localPort, remote, remotePort);
-        if (index < 0)
-            return 0;
-        return index + 1;
-    }
-
-    // Store bytes until they are acknowledged; never overwrite unacknowledged data.
+// #region Reliable Data Transfer
+    //store bytes until they are acknowledged; never overwrite unacknowledged data.
     command uint16_t Transport.write(socket_t fd, uint8_t *buff, uint16_t bufflen) {
         int8_t index = socketIndex(fd);
         uint16_t count = 0;
@@ -609,11 +659,7 @@ implementation {
         return count;
     }
 
-    void sendAck(socket_store_t *s) {
-        s->ackPending = sendControl(s, TP_FLAG_ACK, controlSeq(s), ackNumber(s)) != SUCCESS;
-    }
-
-    // Read bytes that have arrived in order and advertise the newly available space.
+    //read bytes that have arrived in order and advertise the newly available space.
     command uint16_t Transport.read(socket_t fd, uint8_t *buff, uint16_t bufflen) {
         int8_t index = socketIndex(fd);
         uint16_t count = 0;
@@ -633,37 +679,8 @@ implementation {
         return count;
     }
 
-    error_t sendData(socket_store_t *s, uint16_t seq, uint8_t length, bool retry) {
-        TransportSegment segment;
-        uint8_t i;
-
-        segment.srcPort = s->src;
-        segment.destPort = s->dest.port;
-        segment.flags = TP_FLAG_DATA;
-        segment.seq = seq;
-        segment.ack = 0;
-        segment.window = window(s);
-        segment.length = length;
-
-        for (i = 0; i < length; i++) {
-            segment.data[i] = s->sendBuff[(seq + i) % SOCKET_BUFFER_SIZE];
-        }
-
-        if (sendSegment(s->dest.addr, &segment) != SUCCESS)
-            return FAIL;
-
-        dbg("Project3TGen", "t=%lu node=%u conn=%u:%u->%u:%u %s seq=%u len=%u peerWnd=%u\n",
-            (unsigned long)now(), TOS_NODE_ID, s->localAddr, s->src, s->dest.addr, s->dest.port,
-            retry ? "DATA_RETX" : "DATA_TX", seq, length, s->peerWindow);
-        return SUCCESS;
-    }
-
-    // Keep sequence state around so a duplicate FIN can still be acknowledged.
-    void enterTimeWait(socket_store_t *s) {
-        s->state = TIME_WAIT;
-        s->timerActive = FALSE;
-        s->timeWaitDeadline = now() + TRANSPORT_TIME_WAIT_MS;
-        logState(s, "TIME_WAIT");
+    command void Transport.dropNextData() {
+        testDropNextData = TRUE;
     }
 
     void handleAck(uint16_t source, TransportSegment *segment) {
@@ -682,7 +699,7 @@ implementation {
         if (s->state == SYN_SENT || s->state == TIME_WAIT || s->failed)
             return;
 
-        // An ACK for FIN consumes sequence space but acknowledges no data bytes.
+        //an ACK for FIN consumes sequence space but acknowledges no data bytes
         if (s->finSent && segment->ack == s->finSeq + 1) {
             if (s->finAcknowledged)
                 return;
@@ -702,7 +719,7 @@ implementation {
 
         if (segment->ack < s->sendBase || segment->ack > s->nextSend)
             return;
-        // Stop-and-wait accepts only complete segment ACKs.
+        // Stop-and-wait accepts only complete segment ACKs
         if (segment->ack != s->sendBase && segment->ack != s->nextSend)
             return;
 
@@ -731,7 +748,7 @@ implementation {
         if (s->failed || s->state == SYN_SENT || s->state == SYN_RCVD)
             return;
 
-        // Test-only: discard one incoming DATA at the receiver.
+        //test: discard one incoming DATA at the receiver
         if (testDropNextData && s->state == ESTABLISHED) {
             testDropNextData = FALSE;
             dbg("Project3TGen", "t=%lu node=%u TEST_DROP seq=%u len=%u\n",
@@ -751,8 +768,19 @@ implementation {
         } else {
             logState(s, "DATA_DISCARD duplicate/gap/window");
         }
-        // Duplicate or out-of-order data receives the same cumulative ACK.
+        //duplicate or out-of-order data receives the same ACK
         sendAck(s);
+    }
+
+// #endregion
+
+ // #region Connection Teardown
+    //keep sequence state around so a duplicate FIN can still be acknowledged
+    void enterTimeWait(socket_store_t *s) {
+        s->state = TIME_WAIT;
+        s->timerActive = FALSE;
+        s->timeWaitDeadline = now() + TRANSPORT_TIME_WAIT_MS;
+        logState(s, "TIME_WAIT");
     }
 
     void handleFin(uint16_t source, TransportSegment *segment) {
@@ -779,7 +807,7 @@ implementation {
         }
 
         s->finReceived = TRUE;
-        // Mid-Review: the server automatically requests its own close on FIN.
+        //the server automatically requests its own close on FIN
         s->closeRequested = TRUE;
         progress(s);
         logState(s, "FIN_RX");
@@ -817,6 +845,9 @@ implementation {
         sockets[index].used = FALSE;
         return SUCCESS;
     }
+ // #endregion
+
+// #region Retransmission and Timeouts
 
     void failConnection(uint8_t index) {
         socket_store_t *s = &sockets[index];
@@ -856,7 +887,7 @@ implementation {
                 continue;
             }
 
-            // Retransmit the same logical sequence number when its deadline expires.
+            //retransmit the same logical sequence number when its deadline expires
             if (s->timerActive && due(current, s->retransmissionDeadline)) {
                 if (s->retryCount >= TRANSPORT_MAX_RETRIES) {
                     failConnection(i);
@@ -873,10 +904,8 @@ implementation {
                 } else if (s->finSent && !s->finAcknowledged) {
                     sendControl(s, TP_FLAG_FIN, s->finSeq, 0);
                 } else if (s->nextSend > s->sendBase) {
-                    s->retransmitCursor = s->sendBase;
-                    s->retransmitting = TRUE;
                     sendData(s, s->sendBase, s->nextSend - s->sendBase, TRUE);
-                    s->retransmitting = FALSE;
+                
                 }
                 arm(s);
                 continue;
@@ -888,7 +917,7 @@ implementation {
                 continue;
             }
 
-            // Stop-and-wait: send new bytes ONLY if the previous segment was ACKed.
+            // Stop-and-wait: send new bytes ONLY if the previous segment was ACKed
             if (s->nextSend == s->sendBase && s->writeEnd > s->nextSend && s->peerWindow > 0) {
                 remaining = s->writeEnd - s->nextSend;
                 length = TP_MAX_DATA_SIZE;
@@ -905,7 +934,7 @@ implementation {
                     arm(s);
                 }
             } else if (s->closeRequested && s->sendBase == s->writeEnd && !s->finSent) {
-                // FIN is sent only after all queued data has been acknowledged.
+                // FIN is sent only after all queued data has been acknowledged
                 s->finSeq = s->writeEnd;
                 if (sendControl(s, TP_FLAG_FIN, s->finSeq, 0) == SUCCESS) {
                     s->finSent = TRUE;
@@ -916,7 +945,6 @@ implementation {
                 }
             }
 
-            // Bound local transmission failures without timing out a paused receiver.
             if (!s->timerActive && ((s->writeEnd > s->nextSend && s->peerWindow > 0) ||
                                     s->closeRequested) && due(current, s->progressDeadline)) {
                 if (s->writeEnd == s->nextSend || s->peerWindow > 0)
@@ -924,12 +952,15 @@ implementation {
             }
         }
     }
+    
+// #endregion
 
+// #region Incoming Packet Processing
     error_t receiveTransport(pack *packet) {
         TransportSegment segment;
         uint8_t payload[PACKET_MAX_PAYLOAD_SIZE];
 
-        // Validate the network packet
+        //validate network packet
         if (packet == NULL)
             return FAIL;
 
@@ -937,17 +968,17 @@ implementation {
             packet->dest != TOS_NODE_ID)
             return FAIL;
 
-        // Copy the transport payload
+        //copy transport payload
         memcpy(payload, packet->payload,
             PACKET_MAX_PAYLOAD_SIZE);
 
-        // Decode and validate the segment
+        //decode and validate segment
         if (!decodeSegment(payload,
                         PACKET_MAX_PAYLOAD_SIZE,
                         &segment))
             return FAIL;
 
-        // Dispatch the segment
+        //dispatch the segment
         switch (segment.flags) {
             case TP_FLAG_SYN:
                 handleSyn(packet->src, &segment);
@@ -985,4 +1016,5 @@ implementation {
             receiveTransport(&msg);
         }
     }
+// #endregion
 }
