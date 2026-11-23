@@ -30,6 +30,9 @@ implementation {
 
     bool testDropNextData = FALSE;
 
+    //test what happens when window updates are lost
+    bool testDropWindowAcks = FALSE;
+
 // #endregion
 
 // #region Packet Encoding and Decoding
@@ -57,6 +60,7 @@ implementation {
             case TP_FLAG_SYN | TP_FLAG_ACK:
             case TP_FLAG_ACK:
             case TP_FLAG_FIN:
+            case TP_FLAG_WINDOW_CHECK:
             return segment->length == 0;
 
             case TP_FLAG_DATA:
@@ -263,14 +267,29 @@ implementation {
         return sendSegment(s->dest.addr, &segment);    
     }
 
+    
     void sendAck(socket_store_t *s) {
         uint16_t seq = s->nextSend;
 
         if (s->finSent)
             seq++;
 
+        //test: drop window updates until a window check arrives
+        if (TOS_NODE_ID == 4 &&
+            testDropWindowAcks &&
+            window(s) > 0) {
+
+            dbg("Project3TGen",
+                "t=%lu node=%u TEST_DROP_WINDOW_ACK wnd=%u\n",
+                (unsigned long)now(), TOS_NODE_ID, window(s));
+
+            s->ackPending = FALSE;
+            return;
+        }
+
         s->ackPending = sendControl(s, TP_FLAG_ACK, seq, ackNumber(s)) != SUCCESS;
     }
+
 
     error_t sendData(socket_store_t *s, uint16_t seq, uint8_t length, bool retry) {
         TransportSegment segment;
@@ -730,6 +749,11 @@ implementation {
         // Update the receiver's advertised window.
         s->peerWindow = segment->window;
 
+        //stop checking when the receiver has space
+        if (s->peerWindow > 0) {
+            s->windowCheckActive = FALSE;
+        }
+
         if (count > 0) {
             // Move the send window forward.
             s->sendBase = segment->ack;
@@ -781,6 +805,11 @@ implementation {
             }
             s->nextExpected += segment->length;
             progress(s);
+
+            //start dropping window updates once Node 4's buffer is full
+            if (TOS_NODE_ID == 4 && window(s) == 0) {
+                testDropWindowAcks = TRUE;
+            }
             dbg("Project3TGen", "t=%lu node=%u DATA_RX seq=%u len=%u ack=%u wnd=%u\n",
                 (unsigned long)now(), TOS_NODE_ID, segment->seq, segment->length, ackNumber(s), window(s));
         } else {
@@ -789,6 +818,38 @@ implementation {
         //duplicate or out-of-order data receives the same ACK
         sendAck(s);
     }
+
+
+    // Respond to a zero-window probe with our current receive window.
+    void handleWindowCheck(uint16_t source, TransportSegment *segment) {
+        int8_t index = findConnection(TOS_NODE_ID,
+                                     segment->destPort,
+                                     source,
+                                     segment->srcPort);
+        socket_store_t *s;
+
+        if (index < 0)
+            return;
+
+        s = &sockets[index];
+
+        if (s->failed ||
+            (s->state != ESTABLISHED && s->state != CLOSE_WAIT))
+            return;
+
+        dbg("Project3TGen",
+            "t=%lu node=%u WINDOW_CHECK_RX wnd=%u\n",
+            (unsigned long)now(), TOS_NODE_ID, window(s));
+
+        //stop dropping window updates when a window check finds space
+        if (TOS_NODE_ID == 4 && window(s) > 0) {
+            testDropWindowAcks = FALSE;
+        }
+
+        //send an ACK with our current receive window
+        sendAck(s);
+    }
+
 
 // #endregion
 
@@ -962,6 +1023,38 @@ implementation {
                 continue;
             }
 
+
+            //check if the receiver has space again
+            if (s->state == ESTABLISHED &&
+                s->peerWindow == 0 &&
+                s->writeEnd > s->nextSend &&
+                s->nextSend == s->sendBase) {
+
+                if (!s->windowCheckActive) {
+                    s->windowCheckActive = TRUE;
+                    s->windowCheckDeadline = current + TRANSPORT_WINDOW_CHECK_MS;
+
+                } else if (due(current, s->windowCheckDeadline)) {
+
+                    //ask the receiver for its current window size
+                    if (sendControl(s, TP_FLAG_WINDOW_CHECK,
+                                    s->nextSend, 0) == SUCCESS) {
+
+                        dbg("Project3TGen",
+                            "t=%lu node=%u WINDOW_CHECK_TX peerWnd=%u\n",
+                            (unsigned long)current,
+                            TOS_NODE_ID, s->peerWindow);
+                    }
+
+                    // Try again later if the response is lost.
+                    s->windowCheckDeadline = current + TRANSPORT_WINDOW_CHECK_MS;
+                }
+
+            } else {
+                s->windowCheckActive = FALSE;
+            }
+
+
             
             // Sliding window: allow multiple DATA segments in flight
             outstanding = s->nextSend - s->sendBase;
@@ -1063,6 +1156,10 @@ implementation {
 
             case TP_FLAG_FIN:
                 handleFin(packet->src, &segment);
+                break;
+
+            case TP_FLAG_WINDOW_CHECK:
+                handleWindowCheck(packet->src, &segment);
                 break;
 
             default:

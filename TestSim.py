@@ -125,6 +125,16 @@ class TestSim:
     def routeDMP(self, destination):
         self.sendCMD(self.CMD_ROUTE_DUMP, destination, "routing command");
 
+    
+    def testServer(self, node):
+        from run import cmdTestServer
+        cmdTestServer(self, node, 20)
+
+    def testClient(self, node):
+        from run import cmdTestClient
+        cmdTestClient(self, node, 1, 10, 20, 25)
+
+
     def addChannel(self, channelName, out=sys.stdout):
         print 'Adding Channel', channelName;
         self.t.addChannel(channelName, out);

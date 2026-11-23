@@ -27,6 +27,7 @@ enum {
     TP_FLAG_ACK = 0x02,
     TP_FLAG_FIN = 0x04,
     TP_FLAG_DATA = 0x08,
+    TP_FLAG_WINDOW_CHECK = 0x10,
 
     TP_OFF_SRC_PORT = 0,
     TP_OFF_DST_PORT = 1,

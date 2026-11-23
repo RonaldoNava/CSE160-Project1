@@ -292,7 +292,16 @@ implementation
             n=call Transport.write(fd,bytes,n); c->accepted+=n;
             if(n) dbg("Project3TGen","t=%lu node=%u fd=%u ACCEPTED total=%u\n",(unsigned long)call testTimer.getNow(),TOS_NODE_ID,fd,c->accepted);
          }
-         n = call Transport.read(fd,bytes,sizeof(bytes));
+
+        // TEMPORARY TEST: pause Node 4's application reads.
+        // Resume after 125 seconds of simulated time.
+        if (TOS_NODE_ID == 4 && !c->producer &&
+            call testTimer.getNow() < 125000UL) {
+            continue;
+        }
+
+        n = call Transport.read(fd, bytes, sizeof(bytes));
+
          if(n) {
             for(i=0;i<n;i++)
              if(bytes[i]!=(uint8_t)(c->consumed+i)) c->mismatches++;
