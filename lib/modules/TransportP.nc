@@ -208,7 +208,7 @@ implementation {
     void progress(socket_store_t *s) {
         s->progressDeadline = now() + TRANSPORT_STALL_MS;
     }
-
+    //set retransmission deadline
     void arm(socket_store_t *s) {
         s->timerActive = TRUE;
         s->retransmissionDeadline = now() + TRANSPORT_RTO_MS;
@@ -351,7 +351,7 @@ implementation {
         return SUCCESS;
     }
 
-        command socket_t Transport.accept(socket_t fd) {
+     command socket_t Transport.accept(socket_t fd) {
         int8_t index = socketIndex(fd);
         uint8_t i;
 
@@ -378,6 +378,7 @@ implementation {
 // #endregion
 
 // #region Three-Way Handshake
+
     command error_t Transport.connect(socket_t fd, socket_addr_t *addr){
         int8_t index = socketIndex(fd);
         socket_store_t *s;
@@ -404,7 +405,7 @@ implementation {
         //initialize connection
         s->localISN = generateISN();
         s->peerWindow = 0;
-        s->sendWindow = TP_MAX_DATA_SIZE;
+        s->sendWindow = 3 * TP_MAX_DATA_SIZE;
         s->retryCount = 0;
 
         s->state = SYN_SENT;
@@ -501,7 +502,7 @@ implementation {
         s->nextExpected = s->remoteISN + 1;
 
         //initialize windows
-        s->sendWindow = TP_MAX_DATA_SIZE;
+        s->sendWindow = 3 * TP_MAX_DATA_SIZE;
         s->peerWindow = segment->window;
 
         //update connection state
@@ -659,7 +660,8 @@ implementation {
         return count;
     }
 
-    //read bytes that have arrived in order and advertise the newly available space.
+    //read bytes that have arrived in order and advertise the newly available space
+    //the application consumed the bytes
     command uint16_t Transport.read(socket_t fd, uint8_t *buff, uint16_t bufflen) {
         int8_t index = socketIndex(fd);
         uint16_t count = 0;
@@ -717,26 +719,42 @@ implementation {
             return;
         }
 
+        
+        // Reject ACKs outside the transmitted range
         if (segment->ack < s->sendBase || segment->ack > s->nextSend)
             return;
-        // Stop-and-wait accepts only complete segment ACKs
-        if (segment->ack != s->sendBase && segment->ack != s->nextSend)
-            return;
 
+        // Number of newly acknowledged bytes
         count = segment->ack - s->sendBase;
-        if (count > 0 || segment->window > s->peerWindow)
-            s->peerWindow = segment->window;
+
+        // Update the receiver's advertised window.
+        s->peerWindow = segment->window;
+
         if (count > 0) {
+            // Move the send window forward.
             s->sendBase = segment->ack;
-            s->timerActive = FALSE;
+
             s->retryCount = 0;
             progress(s);
-            dbg("Project3TGen", "t=%lu node=%u ACK_RX ack=%u wnd=%u outstanding=%u\n",
-                (unsigned long)now(), TOS_NODE_ID, segment->ack, s->peerWindow, s->nextSend - s->sendBase);
+
+            // Keep the timer active if DATA is still outstanding.
+            if (s->sendBase < s->nextSend) {
+                arm(s);
+            } else {
+                s->timerActive = FALSE;
+            }
+
+            dbg("Project3TGen",
+                "t=%lu node=%u ACK_RX ack=%u wnd=%u outstanding=%u\n",
+                (unsigned long)now(), TOS_NODE_ID,
+                segment->ack, s->peerWindow,
+                s->nextSend - s->sendBase);
+
             signal Transport.acknowledged(index + 1, count);
         }
     }
 
+    //the network delivered the bytes
     void handleData(uint16_t source, TransportSegment *segment) {
         int8_t index = findConnection(TOS_NODE_ID, segment->destPort, source, segment->srcPort);
         socket_store_t *s;
@@ -863,7 +881,12 @@ implementation {
 
     event void transportTimer.fired() {
         uint8_t i, length;
+        uint8_t retryLength;
+
         uint16_t remaining;
+        uint16_t outstanding;
+        uint16_t retryCursor;
+
         uint32_t current = now();
         socket_store_t *s;
 
@@ -903,10 +926,32 @@ implementation {
                     sendSynAck(s);
                 } else if (s->finSent && !s->finAcknowledged) {
                     sendControl(s, TP_FLAG_FIN, s->finSeq, 0);
-                } else if (s->nextSend > s->sendBase) {
-                    sendData(s, s->sendBase, s->nextSend - s->sendBase, TRUE);
                 
+                } else if (s->nextSend > s->sendBase) {
+
+                    // Start retransmitting from the oldest unacknowledged byte
+                    retryCursor = s->sendBase;
+
+                    // Retransmit all outstanding DATA in smaller packets
+                    while (retryCursor < s->nextSend) {
+
+                        remaining = s->nextSend - retryCursor;
+
+                        // Each packet can carry at most 11 bytes
+                        retryLength = TP_MAX_DATA_SIZE;
+
+                        if (remaining < retryLength)
+                            retryLength = remaining;
+
+                        // Retransmit using the original sequence numbers
+                        if (sendData(s, retryCursor, retryLength, TRUE) != SUCCESS)
+                            break;
+
+                        // Move to the next outstanding byte
+                        retryCursor += retryLength;
+                    }
                 }
+
                 arm(s);
                 continue;
             }
@@ -917,21 +962,41 @@ implementation {
                 continue;
             }
 
-            // Stop-and-wait: send new bytes ONLY if the previous segment was ACKed
-            if (s->nextSend == s->sendBase && s->writeEnd > s->nextSend && s->peerWindow > 0) {
+            
+            // Sliding window: allow multiple DATA segments in flight
+            outstanding = s->nextSend - s->sendBase;
+
+            if (s->writeEnd > s->nextSend &&
+                outstanding < s->sendWindow &&
+                outstanding < s->peerWindow) {
+
+                // How many application bytes are waiting to be sent?
                 remaining = s->writeEnd - s->nextSend;
+
                 length = TP_MAX_DATA_SIZE;
+
                 if (remaining < length)
                     length = remaining;
-                if (s->peerWindow < length)
-                    length = s->peerWindow;
-                if (s->sendWindow < length)
-                    length = s->sendWindow;
 
-                if (length > 0 && sendData(s, s->nextSend, length, FALSE) == SUCCESS) {
+                // Do not exceed our local send window
+                if (s->sendWindow - outstanding < length)
+                    length = s->sendWindow - outstanding;
+
+                // Do not exceed the receiver's advertised window
+                if (s->peerWindow - outstanding < length)
+                    length = s->peerWindow - outstanding;
+
+                if (length > 0 &&
+                    sendData(s, s->nextSend, length, FALSE) == SUCCESS) {
+
                     s->nextSend += length;
-                    s->retryCount = 0;
-                    arm(s);
+
+                    // Only start a new retransmission timer
+                    // when there was no outstanding DATA.
+                    if (outstanding == 0) {
+                        s->retryCount = 0;
+                        arm(s);
+                    }
                 }
             } else if (s->closeRequested && s->sendBase == s->writeEnd && !s->finSent) {
                 // FIN is sent only after all queued data has been acknowledged
