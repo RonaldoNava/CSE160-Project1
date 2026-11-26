@@ -30,9 +30,6 @@ implementation {
 
     bool testDropNextData = FALSE;
 
-    //test what happens when window updates are lost
-    bool testDropWindowAcks = FALSE;
-
 // #endregion
 
 // #region Packet Encoding and Decoding
@@ -273,19 +270,6 @@ implementation {
 
         if (s->finSent)
             seq++;
-
-        //test: drop window updates until a window check arrives
-        if (TOS_NODE_ID == 4 &&
-            testDropWindowAcks &&
-            window(s) > 0) {
-
-            dbg("Project3TGen",
-                "t=%lu node=%u TEST_DROP_WINDOW_ACK wnd=%u\n",
-                (unsigned long)now(), TOS_NODE_ID, window(s));
-
-            s->ackPending = FALSE;
-            return;
-        }
 
         s->ackPending = sendControl(s, TP_FLAG_ACK, seq, ackNumber(s)) != SUCCESS;
     }
@@ -806,10 +790,6 @@ implementation {
             s->nextExpected += segment->length;
             progress(s);
 
-            //start dropping window updates once Node 4's buffer is full
-            if (TOS_NODE_ID == 4 && window(s) == 0) {
-                testDropWindowAcks = TRUE;
-            }
             dbg("Project3TGen", "t=%lu node=%u DATA_RX seq=%u len=%u ack=%u wnd=%u\n",
                 (unsigned long)now(), TOS_NODE_ID, segment->seq, segment->length, ackNumber(s), window(s));
         } else {
@@ -840,11 +820,6 @@ implementation {
         dbg("Project3TGen",
             "t=%lu node=%u WINDOW_CHECK_RX wnd=%u\n",
             (unsigned long)now(), TOS_NODE_ID, window(s));
-
-        //stop dropping window updates when a window check finds space
-        if (TOS_NODE_ID == 4 && window(s) > 0) {
-            testDropWindowAcks = FALSE;
-        }
 
         //send an ACK with our current receive window
         sendAck(s);

@@ -38,8 +38,11 @@ implementation
    typedef struct {
       bool used, producer, ready;
       uint16_t target, accepted, acked, consumed, mismatches;
-   } TestConnection;
 
+      //used for the zero-window test
+      bool pauseReads;
+      uint32_t readAfter;
+   } TestConnection;
    TestConnection testConnections[MAX_NUM_OF_SOCKETS + 1];
    
    pack sendPackage;
@@ -202,6 +205,10 @@ implementation
          if(fd) call Transport.release(fd);
          dbg("Project3TGen","t=%lu node=%u SERVER_FAIL port=%u\n",(unsigned long)call testTimer.getNow(),TOS_NODE_ID,port);
       }
+      else {
+         //only pause reads when testing port 21
+         testConnections[fd].pauseReads = (port == 21);
+      }
    }
 
    event void CommandHandler.setTestClient(uint16_t server, uint8_t srcPort, uint8_t destPort, uint16_t total) {
@@ -258,10 +265,30 @@ implementation
       if(validTestFd(fd) && testConnections[fd].used) testConnections[fd].ready=(result==SUCCESS);
    }
    
-   event void Transport.accepted(socket_t listener,socket_t connection) {
-      if(!validTestFd(connection)) return;
-      memset(&testConnections[connection],0,sizeof(TestConnection));
-      testConnections[connection].used=TRUE; testConnections[connection].ready=TRUE;
+   event void Transport.accepted(socket_t listener, socket_t connection) {
+      bool pause = validTestFd(listener) &&
+                  testConnections[listener].pauseReads;
+
+      if (!validTestFd(connection))
+         return;
+
+      memset(&testConnections[connection], 0, sizeof(TestConnection));
+
+      testConnections[connection].used = TRUE;
+      testConnections[connection].ready = TRUE;
+
+      //pause reading for 25 seconds during the zero-window test
+      if (pause) {
+         testConnections[connection].readAfter =
+               call testTimer.getNow() + 25000UL;
+
+         dbg("Project3TGen",
+               "t=%lu node=%u fd=%u TEST_READ_PAUSE until=%lu\n",
+               (unsigned long)call testTimer.getNow(),
+               TOS_NODE_ID,
+               connection,
+               (unsigned long)testConnections[connection].readAfter);
+      }
    }
 
    event void Transport.acknowledged(socket_t fd,uint16_t count) {
@@ -292,15 +319,21 @@ implementation
             n=call Transport.write(fd,bytes,n); c->accepted+=n;
             if(n) dbg("Project3TGen","t=%lu node=%u fd=%u ACCEPTED total=%u\n",(unsigned long)call testTimer.getNow(),TOS_NODE_ID,fd,c->accepted);
          }
+         //wait before reading during the zero-window test
+         if (!c->producer && c->readAfter != 0) {
 
-        // TEMPORARY TEST: pause Node 4's application reads.
-        // Resume after 125 seconds of simulated time.
-        if (TOS_NODE_ID == 4 && !c->producer &&
-            call testTimer.getNow() < 125000UL) {
-            continue;
-        }
+            if ((int32_t)(call testTimer.getNow() - c->readAfter) < 0)
+               continue;
 
-        n = call Transport.read(fd, bytes, sizeof(bytes));
+            dbg("Project3TGen",
+               "t=%lu node=%u fd=%u TEST_READ_RESUME\n",
+               (unsigned long)call testTimer.getNow(),
+               TOS_NODE_ID, fd);
+
+            c->readAfter = 0;
+         }
+
+         n = call Transport.read(fd, bytes, sizeof(bytes));
 
          if(n) {
             for(i=0;i<n;i++)

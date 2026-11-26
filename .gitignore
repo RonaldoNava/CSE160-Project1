@@ -5,3 +5,5 @@ build/*
 *.xml
 TOSSIM.py
 _TOSSIMmodule.so
+
+*.log
